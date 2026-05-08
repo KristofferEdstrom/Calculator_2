@@ -17,6 +17,12 @@ import engine
 
 
 # -----------------------------
+# ANS MEMORY SYSTEM
+# -----------------------------
+
+ANS = 0
+
+# -----------------------------
 # HISTORY STORAGE (PERSISTENT)
 # -----------------------------
 
@@ -124,6 +130,36 @@ engine.functions["tan"] = tan_func
 # CORE FUNCTIONS
 # -----------------------------
 
+def safe_insert(value):
+    """
+    Smart input handler to prevent invalid sequences.
+    """
+
+    current = display.get()
+
+    # Prevent duplicate operators like ++, --, etc.
+    if value in "+-*/":
+
+        if current == "":
+            return
+
+        if current[-1] in "+-*/":
+            display.delete(len(current)-1, tk.END)
+
+    # Prevent multiple decimals in same number chunk
+    if value == ".":
+        # get last number segment
+        last_chunk = ""
+        for char in reversed(current):
+            if char in "+-*/()":
+                break
+            last_chunk = char + last_chunk
+
+        if "." in last_chunk:
+            return
+
+    display.insert(tk.END, value)
+
 def press(value):
     """
     Insert value into calculator display.
@@ -187,23 +223,29 @@ history_listbox.bind("<<ListboxSelect>>", use_history)
 
 def calculate():
     """
-    Evaluate expression using engine and store history.
+    Evaluate expression using engine and store history + ANS.
     """
+
+    global ANS
 
     expr = display.get()
 
     try:
+        # 🔥 inject ANS into expression
+        expr = expr.replace("ANS", str(ANS))
+
         result = evaluate_expression(expr)
         result = format_result(result)
 
     except Exception:
         result = "Error"
 
-    # update display
+    if isinstance(result, (int, float)):
+        ANS = result
+
     display.delete(0, tk.END)
     display.insert(0, str(result))
 
-    # save history
     add_to_history(expr, result)
 
 
@@ -232,6 +274,9 @@ button_frame.pack()
 scientific_row = tk.Frame(button_frame)
 scientific_row.pack(pady=5)
 
+tk.Button(scientific_row, text="ANS", width=6,
+          command=lambda: insert_constant("ANS")).grid(row=0, column=6)
+
 tk.Button(scientific_row, text="sin", width=6,
           command=lambda: insert_func("sin")).grid(row=0, column=0)
 
@@ -259,33 +304,33 @@ grid.pack()
 
 
 # Row 1
-tk.Button(grid, text="7", width=6, command=lambda: press("7")).grid(row=0, column=0)
-tk.Button(grid, text="8", width=6, command=lambda: press("8")).grid(row=0, column=1)
-tk.Button(grid, text="9", width=6, command=lambda: press("9")).grid(row=0, column=2)
-tk.Button(grid, text="/", width=6, command=lambda: press("/")).grid(row=0, column=3)
+tk.Button(grid, text="7", width=6, command=lambda: safe_insert("7")).grid(row=0, column=0)
+tk.Button(grid, text="8", width=6, command=lambda: safe_insert("8")).grid(row=0, column=1)
+tk.Button(grid, text="9", width=6, command=lambda: safe_insert("9")).grid(row=0, column=2)
+tk.Button(grid, text="/", width=6, command=lambda: safe_insert("/")).grid(row=0, column=3)
 tk.Button(grid, text="C", width=6, command=clear).grid(row=0, column=4)
 
 
 # Row 2
-tk.Button(grid, text="4", width=6, command=lambda: press("4")).grid(row=1, column=0)
-tk.Button(grid, text="5", width=6, command=lambda: press("5")).grid(row=1, column=1)
-tk.Button(grid, text="6", width=6, command=lambda: press("6")).grid(row=1, column=2)
-tk.Button(grid, text="*", width=6, command=lambda: press("*")).grid(row=1, column=3)
-tk.Button(grid, text="(", width=6, command=lambda: press("(")).grid(row=1, column=4)
+tk.Button(grid, text="4", width=6, command=lambda: safe_insert("4")).grid(row=1, column=0)
+tk.Button(grid, text="5", width=6, command=lambda: safe_insert("5")).grid(row=1, column=1)
+tk.Button(grid, text="6", width=6, command=lambda: safe_insert("6")).grid(row=1, column=2)
+tk.Button(grid, text="*", width=6, command=lambda: safe_insert("*")).grid(row=1, column=3)
+tk.Button(grid, text="(", width=6, command=lambda: safe_insert("(")).grid(row=1, column=4)
 
 
 # Row 3
-tk.Button(grid, text="1", width=6, command=lambda: press("1")).grid(row=2, column=0)
-tk.Button(grid, text="2", width=6, command=lambda: press("2")).grid(row=2, column=1)
-tk.Button(grid, text="3", width=6, command=lambda: press("3")).grid(row=2, column=2)
-tk.Button(grid, text="-", width=6, command=lambda: press("-")).grid(row=2, column=3)
-tk.Button(grid, text=")", width=6, command=lambda: press(")")).grid(row=2, column=4)
+tk.Button(grid, text="1", width=6, command=lambda: safe_insert("1")).grid(row=2, column=0)
+tk.Button(grid, text="2", width=6, command=lambda: safe_insert("2")).grid(row=2, column=1)
+tk.Button(grid, text="3", width=6, command=lambda: safe_insert("3")).grid(row=2, column=2)
+tk.Button(grid, text="-", width=6, command=lambda: safe_insert("-")).grid(row=2, column=3)
+tk.Button(grid, text=")", width=6, command=lambda: safe_insert(")")).grid(row=2, column=4)
 
 
 # Row 4
-tk.Button(grid, text="0", width=6, command=lambda: press("0")).grid(row=3, column=0)
-tk.Button(grid, text=".", width=6, command=lambda: press(".")).grid(row=3, column=1)
-tk.Button(grid, text="+", width=6, command=lambda: press("+")).grid(row=3, column=2)
+tk.Button(grid, text="0", width=6, command=lambda: safe_insert("0")).grid(row=3, column=0)
+tk.Button(grid, text=".", width=6, command=lambda: safe_insert(".")).grid(row=3, column=1)
+tk.Button(grid, text="+", width=6, command=lambda: safe_insert("+")).grid(row=3, column=2)
 tk.Button(grid, text="=", width=6, command=calculate).grid(row=3, column=3)
 
 # -----------------------------
@@ -302,7 +347,7 @@ tk.Button(bottom, text="e", width=10,
           command=lambda: insert_constant(math.e)).grid(row=0, column=1)
 
 tk.Button(bottom, text="x²", width=10,
-          command=lambda: press("**2")).grid(row=0, column=2)
+          command=lambda: safe_insert("**2")).grid(row=0, column=2)
 
 
 # -----------------------------
@@ -333,18 +378,25 @@ def on_key(event):
 
     # Allow digits and operators
     if key in "0123456789.()*/-+":
-        press(key)
+        safe_insert(key)
         return "break"  # prevent default behavior
 
     # Enter = calculate
     elif event.keysym == "Return":
         calculate()
+        return "break"
 
     # Backspace = delete last character
     elif event.keysym == "BackSpace":
         current = display.get()
         display.delete(0, tk.END)
         display.insert(0, current[:-1])
+        return "break"
+    
+    elif event.keysym == "Escape":
+        clear()
+        return "break"
+    return "break"
 
 
 # Bind keyboard events
