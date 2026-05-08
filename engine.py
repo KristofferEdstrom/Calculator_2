@@ -7,6 +7,7 @@
 import ast
 import operator
 import math
+import re
 
 
 # -----------------------------
@@ -31,6 +32,10 @@ functions = {
     "cos": math.cos,
     "tan": math.tan,
     "log": math.log,
+    "ln": math.log,
+    "log10": math.log10,
+    "abs": abs,
+    "factorial": math.factorial    
 }
 
 
@@ -59,16 +64,31 @@ def format_result(value):
 
     return value
 
+def preprocess_expression(expr):
+    """
+    Converts user-friendly syntax into Python syntax.
+    """
+
+    # Replace ^ with **
+    expr = expr.replace("^", "**")
+
+    # Replace factorials: 5! -> factorial(5)
+    expr = re.sub(r'(\d+)!', r'factorial(\1)', expr)
+
+    return expr
+
 def evaluate_expression(expr: str):
     """
     Safely evaluates a math expression using AST.
     No eval() used — fully controlled.
     """
 
+    expr = preprocess_expression(expr)
+
     # Replace constants like pi, e
     for name, value in constants.items():
         expr = expr.replace(name, str(value))
-
+    
     # Parse expression into AST
     node = ast.parse(expr, mode="eval")
 

@@ -63,8 +63,18 @@ root.geometry("650x600")
 # -----------------------------
 # DISPLAY (main input)
 # -----------------------------
-display = tk.Entry(root, font=("Arial", 22), borderwidth=5, relief="ridge")
-display.pack(fill="both", padx=10, pady=10)
+display = tk.Entry(
+    root,
+    font=("Arial", 22),
+    borderwidth=5,
+    relief="ridge",
+    state="readonly",
+    readonlybackground="white",
+    insertontime=0
+)
+display.pack(fill="both", padx=10, pady=10) # make it wider
+
+display.bind("<Button-1>", lambda e: "break")  # prevent cursor and manual edits
 
 
 # -----------------------------
@@ -136,6 +146,29 @@ engine.functions["tan"] = tan_func
 # CORE FUNCTIONS
 # -----------------------------
 
+def set_display(value):
+    """
+    Replaces the entire display content.
+    """
+
+    display.config(state="normal")
+
+    display.delete(0, tk.END)
+    display.insert(0, value)
+
+    display.config(state="readonly")
+
+def append_display(value):
+    """
+    Appends text to the display.
+    """
+
+    display.config(state="normal")
+
+    display.insert(tk.END, value)
+
+    display.config(state="readonly")
+
 def safe_insert(value):
     """
     Smart input handler to prevent invalid sequences.
@@ -143,41 +176,43 @@ def safe_insert(value):
 
     current = display.get()
 
-    # Prevent duplicate operators like ++, --, etc.
-    if value in "+-*/":
+    # Prevent duplicate operators
+    if value in "+-*/^":
 
         if current == "":
             return
 
-        if current[-1] in "+-*/":
-            display.delete(len(current)-1, tk.END)
+        # Replace last operator instead of stacking
+        if current[-1] in "+-*/^":
+
+            current = current[:-1]
+
+            set_display(current)
 
     # Prevent multiple decimals in same number chunk
     if value == ".":
-        # get last number segment
+
         last_chunk = ""
+
         for char in reversed(current):
-            if char in "+-*/()":
+
+            if char in "+-*/^()":
                 break
+
             last_chunk = char + last_chunk
 
         if "." in last_chunk:
             return
 
-    display.insert(tk.END, value)
-
-def press(value):
-    """
-    Insert value into calculator display.
-    """
-    display.insert(tk.END, value)
+    # Finally append safely
+    append_display(value)
 
 
 def clear():
     """
     Clear display.
     """
-    display.delete(0, tk.END)
+    set_display("")
 
 
 def add_to_history(expression, result):
@@ -220,8 +255,7 @@ def use_history(event):
         # split "expr = result"
         result = value.split("=")[-1].strip()
 
-        display.delete(0, tk.END)
-        display.insert(0, result)
+        set_display(result)
 
 
 history_listbox.bind("<<ListboxSelect>>", use_history)
@@ -249,8 +283,7 @@ def calculate():
     if isinstance(result, (int, float)):
         ANS = result
 
-    display.delete(0, tk.END)
-    display.insert(0, str(result))
+    set_display(str(result))
 
     add_to_history(expr, result)
 
@@ -283,8 +316,7 @@ def memory_recall():
     """
     Inserts memory value into display.
     """
-    display.delete(0, tk.END)
-    display.insert(0, str(format_result(MEMORY)))
+    append_display(str(MEMORY))
 
 
 def memory_clear():
@@ -299,11 +331,11 @@ def memory_clear():
 # SCIENTIFIC HELPERS
 # -----------------------------
 def insert_func(func_name):
-    display.insert(tk.END, func_name + "(")
+    append_display(func_name + "(")
 
 
 def insert_constant(value):
-    display.insert(tk.END, str(value))
+    append_display(str(value))
 
 
 # -----------------------------
@@ -443,7 +475,7 @@ def on_key(event):
     key = event.char
 
     # Allow digits and operators
-    if key in "0123456789.()*/-+":
+    if key in "0123456789.()*/-+^!":
         safe_insert(key)
         return "break"  # prevent default behavior
 
@@ -454,9 +486,11 @@ def on_key(event):
 
     # Backspace = delete last character
     elif event.keysym == "BackSpace":
+
         current = display.get()
-        display.delete(0, tk.END)
-        display.insert(0, current[:-1])
+
+        set_display(current[:-1])
+
         return "break"
     
     elif event.keysym == "Escape":
