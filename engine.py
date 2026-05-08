@@ -46,6 +46,19 @@ constants = {
 # -----------------------------
 # Main evaluation function
 # -----------------------------
+def format_result(value):
+    """
+    Formats output:
+    - converts 3.0 → 3
+    - keeps decimals when needed
+    """
+
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+
+    return value
+
 def evaluate_expression(expr: str):
     """
     Safely evaluates a math expression using AST.

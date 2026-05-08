@@ -10,6 +10,7 @@ from engine import evaluate_expression
 import math
 import json
 import os
+from engine import evaluate_expression, format_result
 
 # Override engine functions with mode-aware trig
 import engine
@@ -188,10 +189,13 @@ def calculate():
     """
     Evaluate expression using engine and store history.
     """
+
     expr = display.get()
 
     try:
         result = evaluate_expression(expr)
+        result = format_result(result)
+
     except Exception:
         result = "Error"
 
@@ -330,6 +334,7 @@ def on_key(event):
     # Allow digits and operators
     if key in "0123456789.()*/-+":
         press(key)
+        return "break"  # prevent default behavior
 
     # Enter = calculate
     elif event.keysym == "Return":
