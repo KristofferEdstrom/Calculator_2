@@ -23,6 +23,12 @@ import engine
 ANS = 0
 
 # -----------------------------
+# MEMORY REGISTER
+# -----------------------------
+
+MEMORY = 0
+
+# -----------------------------
 # HISTORY STORAGE (PERSISTENT)
 # -----------------------------
 
@@ -249,6 +255,46 @@ def calculate():
     add_to_history(expr, result)
 
 
+def memory_add():
+    """
+    Adds current display value to memory.
+    """
+    global MEMORY
+
+    try:
+        MEMORY += float(display.get())
+    except ValueError:
+        pass
+
+
+def memory_subtract():
+    """
+    Subtracts current display value from memory.
+    """
+    global MEMORY
+
+    try:
+        MEMORY -= float(display.get())
+    except ValueError:
+        pass
+
+
+def memory_recall():
+    """
+    Inserts memory value into display.
+    """
+    display.delete(0, tk.END)
+    display.insert(0, str(format_result(MEMORY)))
+
+
+def memory_clear():
+    """
+    Clears memory register.
+    """
+    global MEMORY
+    MEMORY = 0
+
+
 # -----------------------------
 # SCIENTIFIC HELPERS
 # -----------------------------
@@ -294,6 +340,26 @@ tk.Button(scientific_row, text="π", width=6,
 
 tk.Button(scientific_row, text="e", width=6,
           command=lambda: insert_constant(math.e)).grid(row=0, column=5)
+
+
+# -----------------------------
+# MEMORY BUTTONS
+# -----------------------------
+
+memory_row = tk.Frame(button_frame)
+memory_row.pack(pady=5)
+
+tk.Button(memory_row, text="M+", width=6,
+          command=memory_add).grid(row=0, column=0)
+
+tk.Button(memory_row, text="M-", width=6,
+          command=memory_subtract).grid(row=0, column=1)
+
+tk.Button(memory_row, text="MR", width=6,
+          command=memory_recall).grid(row=0, column=2)
+
+tk.Button(memory_row, text="MC", width=6,
+          command=memory_clear).grid(row=0, column=3)
 
 
 # -----------------------------
