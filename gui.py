@@ -11,6 +11,10 @@ import math
 import json
 import os
 
+# Override engine functions with mode-aware trig
+import engine
+
+
 # -----------------------------
 # HISTORY STORAGE (PERSISTENT)
 # -----------------------------
@@ -69,8 +73,56 @@ history_listbox.pack()
 
 
 # -----------------------------
+# ANGLE MODE (DEG / RAD)
+# -----------------------------
+
+angle_mode = "RAD"  # default mode
+
+functions = {
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+}
+
+def sin_func(x):
+    if angle_mode == "DEG":
+        x = math.radians(x)
+    return math.sin(x)
+
+
+def cos_func(x):
+    if angle_mode == "DEG":
+        x = math.radians(x)
+    return math.cos(x)
+
+
+def tan_func(x):
+    if angle_mode == "DEG":
+        x = math.radians(x)
+    return math.tan(x)
+
+def toggle_angle_mode():
+    """
+    Switches between DEG and RAD mode.
+    """
+    global angle_mode
+
+    if angle_mode == "RAD":
+        angle_mode = "DEG"
+        mode_button.config(text="Mode: DEG")
+    else:
+        angle_mode = "RAD"
+        mode_button.config(text="Mode: RAD")
+
+engine.functions["sin"] = sin_func
+engine.functions["cos"] = cos_func
+engine.functions["tan"] = tan_func
+
+
+# -----------------------------
 # CORE FUNCTIONS
 # -----------------------------
+
 def press(value):
     """
     Insert value into calculator display.
@@ -255,6 +307,14 @@ tk.Button(bottom, text="x²", width=10,
 tk.Button(root, text="C", height=2, command=clear).pack(fill="both")
 tk.Button(root, text="=", height=2, command=calculate).pack(fill="both")
 tk.Button(history_frame, text="Clear History", command=clear_history).pack(pady=5)
+mode_button = tk.Button(
+    root,
+    text="Mode: RAD",
+    command=toggle_angle_mode,
+    height=2
+)
+
+mode_button.pack(fill="both")
 
 # -----------------------------
 # KEYBOARD SUPPORT
