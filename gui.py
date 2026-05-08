@@ -8,7 +8,32 @@
 import tkinter as tk
 from engine import evaluate_expression
 import math
+import json
+import os
 
+# -----------------------------
+# HISTORY STORAGE (PERSISTENT)
+# -----------------------------
+
+HISTORY_FILE = "history.json"
+
+
+def load_history():
+    """
+    Loads history from file when app starts.
+    """
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+
+def save_history():
+    """
+    Saves current history to file.
+    """
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=4)
 
 # -----------------------------
 # WINDOW SETUP
@@ -28,7 +53,7 @@ display.pack(fill="both", padx=10, pady=10)
 # -----------------------------
 # HISTORY STORAGE
 # -----------------------------
-history = []
+history = load_history()
 
 
 # -----------------------------
@@ -62,12 +87,29 @@ def clear():
 
 def add_to_history(expression, result):
     """
-    Save calculation to history and update UI list.
+    Adds entry to history list AND saves to file.
     """
+
     entry = f"{expression} = {result}"
+
     history.append(entry)
 
     history_listbox.insert(tk.END, entry)
+
+    # Save immediately so nothing is lost
+    save_history()
+
+    # Load saved history into GUI
+for item in history:
+    history_listbox.insert(tk.END, item)
+
+def clear_history():
+    """
+    Clears history both in UI and file.
+    """
+    history.clear()
+    history_listbox.delete(0, tk.END)
+    save_history()
 
 
 def use_history(event):
@@ -212,6 +254,7 @@ tk.Button(bottom, text="x²", width=10,
 # -----------------------------
 tk.Button(root, text="C", height=2, command=clear).pack(fill="both")
 tk.Button(root, text="=", height=2, command=calculate).pack(fill="both")
+tk.Button(history_frame, text="Clear History", command=clear_history).pack(pady=5)
 
 # -----------------------------
 # KEYBOARD SUPPORT
