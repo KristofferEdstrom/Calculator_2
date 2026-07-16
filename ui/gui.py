@@ -9,6 +9,7 @@ Buttons, keyboard controls, memory, themes, and settings
 are handled by their own modules.
 """
 
+from graphs.plotter import open_graph_window
 import json
 import math
 from pathlib import Path
@@ -305,6 +306,26 @@ def toggle_angle_mode() -> None:
     update_setting(settings, "angle_mode", ANGLE_MODE)
     update_status()
 
+# --------------------------------------------------
+# GRAPHING
+# --------------------------------------------------
+
+def graph_current_expression() -> None:
+    """
+    Opens the graph window using the current calculator expression.
+    """
+
+    expression = get_display().strip()
+
+    if not expression:
+        expression = "x"
+
+    open_graph_window(
+        parent=root,
+        initial_expression=expression,
+    )
+
+
 
 # --------------------------------------------------
 # DISPLAY INPUT HELPERS
@@ -518,6 +539,7 @@ create_scientific_buttons(
     parent=button_frame,
     insert_function=insert_function,
     insert_constant=insert_constant,
+    graph_expression=graph_current_expression,
 )
 
 create_memory_buttons(

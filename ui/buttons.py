@@ -55,27 +55,33 @@ def create_scientific_buttons(
     parent: tk.Widget,
     insert_function: Callable[[str], None],
     insert_constant: Callable[[str], None],
+    graph_expression: Callable[[], None],
 ) -> tk.Frame:
-    """Create the scientific-function button row."""
+    """
+    Create the scientific-function buttons.
+
+    The graph button calls a function supplied by gui.py.
+    """
     frame = tk.Frame(parent)
     frame.pack(pady=5)
 
     scientific_buttons = [
-        ("sin", lambda: insert_function("sin")),
-        ("cos", lambda: insert_function("cos")),
-        ("tan", lambda: insert_function("tan")),
-        ("sqrt", lambda: insert_function("sqrt")),
-        ("ln", lambda: insert_function("ln")),
-        ("log10", lambda: insert_function("log10")),
-        ("abs", lambda: insert_function("abs")),
-        ("π", lambda: insert_constant("pi")),
-        ("e", lambda: insert_constant("e")),
-        ("ANS", lambda: insert_constant("ANS")),
+        ("sin", partial(insert_function, "sin")),
+        ("cos", partial(insert_function, "cos")),
+        ("tan", partial(insert_function, "tan")),
+        ("sqrt", partial(insert_function, "sqrt")),
+        ("ln", partial(insert_function, "ln")),
+        ("log10", partial(insert_function, "log10")),
+        ("abs", partial(insert_function, "abs")),
+        ("π", partial(insert_constant, "pi")),
+        ("e", partial(insert_constant, "e")),
+        ("ANS", partial(insert_constant, "ANS")),
+        ("Graph", graph_expression),
     ]
 
     for index, (text, command) in enumerate(scientific_buttons):
-        row = index // 5
-        column = index % 5
+        row = index // 6
+        column = index % 6
 
         make_button(
             frame,
