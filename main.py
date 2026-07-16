@@ -8,7 +8,7 @@ Run this file with:
     py main.py
 """
 
-from gui import run
+from ui.gui import run
 
 
 def main() -> None:

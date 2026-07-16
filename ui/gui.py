@@ -15,14 +15,14 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 
-import engine
-from buttons import (
+import core.engine as engine
+from ui.buttons import (
     create_keypad,
     create_memory_buttons,
     create_scientific_buttons,
     create_special_buttons,
 )
-from display import (
+from ui.display import (
     append_display,
     backspace,
     clear_display,
@@ -30,11 +30,11 @@ from display import (
     replace_display,
     set_display_widget,
 )
-from engine import evaluate_expression, format_result
-from keyboard import bind_keyboard
-from memory import MemoryRegister
-from settings import load_settings, update_setting
-from themes import apply_theme
+from core.engine import evaluate_expression, format_result
+from ui.keyboard import bind_keyboard
+from core.memory import MemoryRegister
+from core.settings import load_settings, update_setting
+from ui.themes import apply_theme
 
 
 # --------------------------------------------------
