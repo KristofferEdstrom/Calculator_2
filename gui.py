@@ -1,508 +1,614 @@
-# gui.py
-# -----------------------------
-# Scientific Calculator GUI
-# Now with HISTORY PANEL
-# Uses engine.py (safe evaluator)
-# -----------------------------
+"""
+gui.py
 
-import tkinter as tk
-from engine import evaluate_expression
-import math
+Builds and controls the scientific calculator GUI.
+
+The mathematical evaluation is handled by engine.py.
+Display manipulation is handled by display.py.
+Buttons, keyboard controls, memory, themes, and settings
+are handled by their own modules.
+"""
+
 import json
-import os
-from engine import evaluate_expression, format_result
+import math
+from pathlib import Path
+import tkinter as tk
+from tkinter import messagebox
 
-# Override engine functions with mode-aware trig
 import engine
+from buttons import (
+    create_keypad,
+    create_memory_buttons,
+    create_scientific_buttons,
+    create_special_buttons,
+)
+from display import (
+    append_display,
+    backspace,
+    clear_display,
+    get_display,
+    replace_display,
+    set_display_widget,
+)
+from engine import evaluate_expression, format_result
+from keyboard import bind_keyboard
+from memory import MemoryRegister
+from settings import load_settings, update_setting
+from themes import apply_theme
 
 
-# -----------------------------
-# ANS MEMORY SYSTEM
-# -----------------------------
+# --------------------------------------------------
+# FILE PATHS
+# --------------------------------------------------
 
-ANS = 0
-
-# -----------------------------
-# MEMORY REGISTER
-# -----------------------------
-
-MEMORY = 0
-
-# -----------------------------
-# HISTORY STORAGE (PERSISTENT)
-# -----------------------------
-
-HISTORY_FILE = "history.json"
+HISTORY_FILE = Path("history.json")
 
 
-def load_history():
-    """
-    Loads history from file when app starts.
-    """
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r") as f:
-            return json.load(f)
-    return []
+# --------------------------------------------------
+# APPLICATION SETTINGS AND STATE
+# --------------------------------------------------
+
+settings = load_settings()
+
+ANS: int | float = 0
+ANGLE_MODE: str = str(settings.get("angle_mode", "RAD"))
+
+memory = MemoryRegister()
+history: list[str] = []
 
 
-def save_history():
-    """
-    Saves current history to file.
-    """
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(history, f, indent=4)
-
-# -----------------------------
+# --------------------------------------------------
 # WINDOW SETUP
-# -----------------------------
+# --------------------------------------------------
+
 root = tk.Tk()
 root.title("Scientific Calculator")
-root.geometry("650x600")
+
+window_width = int(settings.get("window_width", 650))
+window_height = int(settings.get("window_height", 600))
+
+root.geometry(f"{window_width}x{window_height}")
+root.minsize(620, 550)
 
 
-# -----------------------------
-# DISPLAY (main input)
-# -----------------------------
+# --------------------------------------------------
+# MAIN LAYOUT
+# --------------------------------------------------
+
+main_frame = tk.Frame(root)
+main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+calculator_frame = tk.Frame(main_frame)
+calculator_frame.pack(side="left", fill="both", expand=True)
+
+history_frame = tk.Frame(main_frame)
+history_frame.pack(side="right", fill="y", padx=(10, 0))
+
+
+# --------------------------------------------------
+# DISPLAY
+# --------------------------------------------------
+
 display = tk.Entry(
-    root,
+    calculator_frame,
     font=("Arial", 22),
     borderwidth=5,
     relief="ridge",
+    justify="right",
     state="readonly",
     readonlybackground="white",
-    insertontime=0
+    insertontime=0,
 )
-display.pack(fill="both", padx=10, pady=10) # make it wider
 
-display.bind("<Button-1>", lambda e: "break")  # prevent cursor and manual edits
+display.pack(fill="x", pady=(0, 10))
 
+# Prevent mouse clicks from placing a cursor inside the display.
+display.bind("<Button-1>", lambda event: "break")
 
-# -----------------------------
-# HISTORY STORAGE
-# -----------------------------
-history = load_history()
-
-
-# -----------------------------
-# HISTORY UI (right side panel)
-# -----------------------------
-history_frame = tk.Frame(root)
-history_frame.pack(side="right", fill="y", padx=10)
-
-tk.Label(history_frame, text="History", font=("Arial", 14, "bold")).pack()
-
-history_listbox = tk.Listbox(history_frame, width=25, height=25)
-history_listbox.pack()
+# Register the Entry widget with display.py.
+set_display_widget(display)
 
 
-# -----------------------------
-# ANGLE MODE (DEG / RAD)
-# -----------------------------
+# --------------------------------------------------
+# STATUS BAR
+# --------------------------------------------------
 
-angle_mode = "RAD"  # default mode
+status_variable = tk.StringVar()
 
-functions = {
-    "sin": math.sin,
-    "cos": math.cos,
-    "tan": math.tan,
-}
+status_label = tk.Label(
+    calculator_frame,
+    textvariable=status_variable,
+    anchor="w",
+    font=("Arial", 9),
+)
 
-def sin_func(x):
-    if angle_mode == "DEG":
-        x = math.radians(x)
-    return math.sin(x)
+status_label.pack(fill="x", pady=(0, 5))
 
 
-def cos_func(x):
-    if angle_mode == "DEG":
-        x = math.radians(x)
-    return math.cos(x)
-
-
-def tan_func(x):
-    if angle_mode == "DEG":
-        x = math.radians(x)
-    return math.tan(x)
-
-def toggle_angle_mode():
+def update_status() -> None:
     """
-    Switches between DEG and RAD mode.
+    Update the status bar with the current angle mode,
+    memory state, and ANS value.
     """
-    global angle_mode
+    memory_indicator = "M" if memory.has_value() else "-"
 
-    if angle_mode == "RAD":
-        angle_mode = "DEG"
-        mode_button.config(text="Mode: DEG")
-    else:
-        angle_mode = "RAD"
-        mode_button.config(text="Mode: RAD")
-
-engine.functions["sin"] = sin_func
-engine.functions["cos"] = cos_func
-engine.functions["tan"] = tan_func
+    status_variable.set(
+        f"Mode: {ANGLE_MODE}    "
+        f"Memory: {memory_indicator}    "
+        f"ANS: {format_result(ANS)}"
+    )
 
 
-# -----------------------------
-# CORE FUNCTIONS
-# -----------------------------
+# --------------------------------------------------
+# HISTORY FILE OPERATIONS
+# --------------------------------------------------
 
-def set_display(value):
+def load_history() -> list[str]:
     """
-    Replaces the entire display content.
+    Load saved calculator history from history.json.
+
+    Returns an empty list if the file does not exist,
+    is unreadable, or contains invalid JSON.
     """
+    if not HISTORY_FILE.exists():
+        return []
 
-    display.config(state="normal")
+    try:
+        with HISTORY_FILE.open("r", encoding="utf-8") as file:
+            loaded_history = json.load(file)
 
-    display.delete(0, tk.END)
-    display.insert(0, value)
+        if isinstance(loaded_history, list):
+            return [str(item) for item in loaded_history]
 
-    display.config(state="readonly")
+    except (json.JSONDecodeError, OSError):
+        pass
 
-def append_display(value):
+    return []
+
+
+def save_history() -> None:
+    """Save the current history list to history.json."""
+    try:
+        with HISTORY_FILE.open("w", encoding="utf-8") as file:
+            json.dump(history, file, indent=4)
+
+    except OSError as error:
+        messagebox.showerror(
+            "History Error",
+            f"Could not save history:\n{error}",
+        )
+
+
+def add_to_history(expression: str, result: object) -> None:
     """
-    Appends text to the display.
+    Add one completed calculation to memory, the listbox,
+    and the history file.
     """
-
-    display.config(state="normal")
-
-    display.insert(tk.END, value)
-
-    display.config(state="readonly")
-
-def safe_insert(value):
-    """
-    Smart input handler to prevent invalid sequences.
-    """
-
-    current = display.get()
-
-    # Prevent duplicate operators
-    if value in "+-*/^":
-
-        if current == "":
-            return
-
-        # Replace last operator instead of stacking
-        if current[-1] in "+-*/^":
-
-            current = current[:-1]
-
-            set_display(current)
-
-    # Prevent multiple decimals in same number chunk
-    if value == ".":
-
-        last_chunk = ""
-
-        for char in reversed(current):
-
-            if char in "+-*/^()":
-                break
-
-            last_chunk = char + last_chunk
-
-        if "." in last_chunk:
-            return
-
-    # Finally append safely
-    append_display(value)
-
-
-def clear():
-    """
-    Clear display.
-    """
-    set_display("")
-
-
-def add_to_history(expression, result):
-    """
-    Adds entry to history list AND saves to file.
-    """
-
     entry = f"{expression} = {result}"
 
     history.append(entry)
-
     history_listbox.insert(tk.END, entry)
+    history_listbox.see(tk.END)
 
-    # Save immediately so nothing is lost
     save_history()
 
-    # Load saved history into GUI
-for item in history:
-    history_listbox.insert(tk.END, item)
 
-def clear_history():
-    """
-    Clears history both in UI and file.
-    """
+def clear_history() -> None:
+    """Clear all history from memory, the GUI, and disk."""
     history.clear()
     history_listbox.delete(0, tk.END)
     save_history()
 
 
-def use_history(event):
+def use_history(_event: tk.Event) -> None:
     """
-    When user clicks history item,
-    load result back into display.
+    Recall the result from the selected history entry.
+
+    For example:
+
+        5 + 5 = 10
+
+    places 10 into the display.
     """
     selection = history_listbox.curselection()
 
-    if selection:
-        value = history_listbox.get(selection[0])
+    if not selection:
+        return
 
-        # split "expr = result"
-        result = value.split("=")[-1].strip()
+    entry = history_listbox.get(selection[0])
 
-        set_display(result)
+    # Split only once from the right, in case an expression
+    # later contains another equals sign.
+    _expression, separator, result = entry.rpartition("=")
+
+    if separator:
+        replace_display(result.strip())
 
 
+# --------------------------------------------------
+# HISTORY PANEL
+# --------------------------------------------------
+
+history_title = tk.Label(
+    history_frame,
+    text="History",
+    font=("Arial", 14, "bold"),
+)
+
+history_title.pack(pady=(0, 5))
+
+history_listbox = tk.Listbox(
+    history_frame,
+    width=27,
+    height=25,
+)
+
+history_listbox.pack(fill="both", expand=True)
 history_listbox.bind("<<ListboxSelect>>", use_history)
 
+clear_history_button = tk.Button(
+    history_frame,
+    text="Clear History",
+    command=clear_history,
+)
 
-def calculate():
-    """
-    Evaluate expression using engine and store history + ANS.
-    """
+clear_history_button.pack(fill="x", pady=(5, 0))
 
+history = load_history()
+
+for history_item in history:
+    history_listbox.insert(tk.END, history_item)
+
+
+# --------------------------------------------------
+# ANGLE MODE
+# --------------------------------------------------
+
+def sine(value: float) -> float:
+    """Calculate sine using the selected DEG/RAD mode."""
+    if ANGLE_MODE == "DEG":
+        value = math.radians(value)
+
+    return math.sin(value)
+
+
+def cosine(value: float) -> float:
+    """Calculate cosine using the selected DEG/RAD mode."""
+    if ANGLE_MODE == "DEG":
+        value = math.radians(value)
+
+    return math.cos(value)
+
+
+def tangent(value: float) -> float:
+    """Calculate tangent using the selected DEG/RAD mode."""
+    if ANGLE_MODE == "DEG":
+        value = math.radians(value)
+
+    return math.tan(value)
+
+
+# Replace the engine's normal trig functions with
+# our angle-mode-aware versions.
+engine.functions["sin"] = sine
+engine.functions["cos"] = cosine
+engine.functions["tan"] = tangent
+
+
+def toggle_angle_mode() -> None:
+    """Switch between radians and degrees."""
+    global ANGLE_MODE
+
+    ANGLE_MODE = "DEG" if ANGLE_MODE == "RAD" else "RAD"
+
+    mode_button.config(text=f"Mode: {ANGLE_MODE}")
+    update_setting(settings, "angle_mode", ANGLE_MODE)
+    update_status()
+
+
+# --------------------------------------------------
+# DISPLAY INPUT HELPERS
+# --------------------------------------------------
+
+def safe_insert(value: str) -> None:
+    """
+    Insert calculator input while preventing some common
+    invalid input sequences.
+
+    Examples:
+    - Replaces repeated operators such as ++ or /*
+    - Prevents multiple decimal points in one number
+    - Prevents factorial at the start of an expression
+    """
+    current = get_display()
+
+    binary_operators = "+-*/^"
+
+    # A binary operator cannot normally start an expression.
+    # A leading minus is allowed for negative numbers.
+    if value in binary_operators and not current:
+        if value == "-":
+            append_display(value)
+        return
+
+    # Replace the previous operator instead of stacking operators.
+    if value in binary_operators and current:
+        if current[-1] in binary_operators:
+            replace_display(current[:-1] + value)
+            return
+
+    # Prevent multiple decimal points in the current number.
+    if value == ".":
+        current_number = ""
+
+        for character in reversed(current):
+            if character in "+-*/^()":
+                break
+
+            current_number = character + current_number
+
+        if "." in current_number:
+            return
+
+        # Entering "." into an empty expression becomes "0.".
+        if not current or current[-1] in "+-*/^(":
+            append_display("0.")
+            return
+
+    # Factorial requires something before it.
+    if value == "!":
+        if not current:
+            return
+
+        if current[-1] in "+-*/^(.!":
+            return
+
+    append_display(value)
+
+
+def insert_function(function_name: str) -> None:
+    """Insert a scientific function followed by an opening parenthesis."""
+    append_display(f"{function_name}(")
+
+
+def insert_constant(value: str) -> None:
+    """Insert a mathematical constant or special value."""
+    current = get_display()
+
+    # Add multiplication automatically when a number or closing
+    # parenthesis appears immediately before a constant.
+    if current and (current[-1].isdigit() or current[-1] == ")"):
+        append_display("*")
+
+    append_display(str(value))
+
+
+# --------------------------------------------------
+# CALCULATION
+# --------------------------------------------------
+
+def calculate() -> None:
+    """Evaluate the displayed expression and store its result."""
     global ANS
 
-    expr = display.get()
+    original_expression = get_display().strip()
+
+    if not original_expression:
+        return
+
+    expression_for_engine = original_expression.replace("ANS", str(ANS))
 
     try:
-        # 🔥 inject ANS into expression
-        expr = expr.replace("ANS", str(ANS))
-
-        result = evaluate_expression(expr)
+        result = evaluate_expression(expression_for_engine)
         result = format_result(result)
 
+    except ZeroDivisionError:
+        result = "Cannot divide by zero"
+
+    except (SyntaxError, TypeError, ValueError, OverflowError):
+        result = "Error"
+
     except Exception:
+        # Prevent the GUI from crashing if an unexpected parser error occurs.
         result = "Error"
 
     if isinstance(result, (int, float)):
         ANS = result
 
-    set_display(str(result))
+    replace_display(str(result))
+    add_to_history(original_expression, result)
+    update_status()
 
-    add_to_history(expr, result)
 
+# --------------------------------------------------
+# MEMORY CONTROLS
+# --------------------------------------------------
 
-def memory_add():
+def get_numeric_display_value() -> float | None:
     """
-    Adds current display value to memory.
+    Return the current display as a number.
+
+    If the display contains an expression, attempt to evaluate it.
+    Returns None when it cannot be converted or evaluated.
     """
-    global MEMORY
+    text = get_display().strip()
+
+    if not text:
+        return None
 
     try:
-        MEMORY += float(display.get())
+        return float(text)
+
     except ValueError:
-        pass
+        try:
+            expression = text.replace("ANS", str(ANS))
+            result = evaluate_expression(expression)
+            return float(result)
+
+        except (SyntaxError, TypeError, ValueError, ZeroDivisionError):
+            return None
 
 
-def memory_subtract():
-    """
-    Subtracts current display value from memory.
-    """
-    global MEMORY
+def memory_add() -> None:
+    """Add the current value or expression result to memory."""
+    value = get_numeric_display_value()
 
-    try:
-        MEMORY -= float(display.get())
-    except ValueError:
-        pass
+    if value is None:
+        return
 
-
-def memory_recall():
-    """
-    Inserts memory value into display.
-    """
-    append_display(str(MEMORY))
+    memory.add(value)
+    update_status()
 
 
-def memory_clear():
-    """
-    Clears memory register.
-    """
-    global MEMORY
-    MEMORY = 0
+def memory_subtract() -> None:
+    """Subtract the current value or expression result from memory."""
+    value = get_numeric_display_value()
+
+    if value is None:
+        return
+
+    memory.subtract(value)
+    update_status()
 
 
-# -----------------------------
-# SCIENTIFIC HELPERS
-# -----------------------------
-def insert_func(func_name):
-    append_display(func_name + "(")
+def memory_recall() -> None:
+    """Insert the stored memory value into the display."""
+    recalled_value = format_result(memory.recall())
+
+    current = get_display()
+
+    if current and (current[-1].isdigit() or current[-1] == ")"):
+        append_display("*")
+
+    append_display(str(recalled_value))
 
 
-def insert_constant(value):
-    append_display(str(value))
+def memory_clear() -> None:
+    """Clear the manual memory register."""
+    memory.clear()
+    update_status()
 
 
-# -----------------------------
-# REFINED SCIENTIFIC BUTTON LAYOUT
-# -----------------------------
+# --------------------------------------------------
+# THEME CONTROLS
+# --------------------------------------------------
 
-button_frame = tk.Frame(root)
-button_frame.pack()
-
-
-# -----------------------------
-# TOP SCIENTIFIC ROW
-# -----------------------------
-scientific_row = tk.Frame(button_frame)
-scientific_row.pack(pady=5)
-
-tk.Button(scientific_row, text="ANS", width=6,
-          command=lambda: insert_constant("ANS")).grid(row=0, column=6)
-
-tk.Button(scientific_row, text="sin", width=6,
-          command=lambda: insert_func("sin")).grid(row=0, column=0)
-
-tk.Button(scientific_row, text="cos", width=6,
-          command=lambda: insert_func("cos")).grid(row=0, column=1)
-
-tk.Button(scientific_row, text="tan", width=6,
-          command=lambda: insert_func("tan")).grid(row=0, column=2)
-
-tk.Button(scientific_row, text="sqrt", width=6,
-          command=lambda: insert_func("sqrt")).grid(row=0, column=3)
-
-tk.Button(scientific_row, text="π", width=6,
-          command=lambda: insert_constant(math.pi)).grid(row=0, column=4)
-
-tk.Button(scientific_row, text="e", width=6,
-          command=lambda: insert_constant(math.e)).grid(row=0, column=5)
+def set_theme(theme_name: str) -> None:
+    """Apply and save a theme."""
+    apply_theme(root, theme_name)
+    update_setting(settings, "theme", theme_name)
 
 
-# -----------------------------
-# MEMORY BUTTONS
-# -----------------------------
+def toggle_theme() -> None:
+    """Toggle between the light and dark themes."""
+    current_theme = str(settings.get("theme", "light"))
+    next_theme = "dark" if current_theme == "light" else "light"
 
-memory_row = tk.Frame(button_frame)
-memory_row.pack(pady=5)
-
-tk.Button(memory_row, text="M+", width=6,
-          command=memory_add).grid(row=0, column=0)
-
-tk.Button(memory_row, text="M-", width=6,
-          command=memory_subtract).grid(row=0, column=1)
-
-tk.Button(memory_row, text="MR", width=6,
-          command=memory_recall).grid(row=0, column=2)
-
-tk.Button(memory_row, text="MC", width=6,
-          command=memory_clear).grid(row=0, column=3)
+    set_theme(next_theme)
 
 
-# -----------------------------
-# MAIN GRID (numbers + operators)
-# -----------------------------
-grid = tk.Frame(button_frame)
-grid.pack()
+# --------------------------------------------------
+# BUTTON WIDGETS
+# --------------------------------------------------
 
+button_frame = tk.Frame(calculator_frame)
+button_frame.pack(fill="both", expand=True)
 
-# Row 1
-tk.Button(grid, text="7", width=6, command=lambda: safe_insert("7")).grid(row=0, column=0)
-tk.Button(grid, text="8", width=6, command=lambda: safe_insert("8")).grid(row=0, column=1)
-tk.Button(grid, text="9", width=6, command=lambda: safe_insert("9")).grid(row=0, column=2)
-tk.Button(grid, text="/", width=6, command=lambda: safe_insert("/")).grid(row=0, column=3)
-tk.Button(grid, text="C", width=6, command=clear).grid(row=0, column=4)
-
-
-# Row 2
-tk.Button(grid, text="4", width=6, command=lambda: safe_insert("4")).grid(row=1, column=0)
-tk.Button(grid, text="5", width=6, command=lambda: safe_insert("5")).grid(row=1, column=1)
-tk.Button(grid, text="6", width=6, command=lambda: safe_insert("6")).grid(row=1, column=2)
-tk.Button(grid, text="*", width=6, command=lambda: safe_insert("*")).grid(row=1, column=3)
-tk.Button(grid, text="(", width=6, command=lambda: safe_insert("(")).grid(row=1, column=4)
-
-
-# Row 3
-tk.Button(grid, text="1", width=6, command=lambda: safe_insert("1")).grid(row=2, column=0)
-tk.Button(grid, text="2", width=6, command=lambda: safe_insert("2")).grid(row=2, column=1)
-tk.Button(grid, text="3", width=6, command=lambda: safe_insert("3")).grid(row=2, column=2)
-tk.Button(grid, text="-", width=6, command=lambda: safe_insert("-")).grid(row=2, column=3)
-tk.Button(grid, text=")", width=6, command=lambda: safe_insert(")")).grid(row=2, column=4)
-
-
-# Row 4
-tk.Button(grid, text="0", width=6, command=lambda: safe_insert("0")).grid(row=3, column=0)
-tk.Button(grid, text=".", width=6, command=lambda: safe_insert(".")).grid(row=3, column=1)
-tk.Button(grid, text="+", width=6, command=lambda: safe_insert("+")).grid(row=3, column=2)
-tk.Button(grid, text="=", width=6, command=calculate).grid(row=3, column=3)
-
-# -----------------------------
-# CONSTANTS + SPECIAL BUTTONS
-# -----------------------------
-bottom = tk.Frame(root)
-bottom.pack(pady=10)
-
-
-tk.Button(bottom, text="π", width=10,
-          command=lambda: insert_constant(math.pi)).grid(row=0, column=0)
-
-tk.Button(bottom, text="e", width=10,
-          command=lambda: insert_constant(math.e)).grid(row=0, column=1)
-
-tk.Button(bottom, text="x²", width=10,
-          command=lambda: safe_insert("**2")).grid(row=0, column=2)
-
-
-# -----------------------------
-# CONTROL BUTTONS
-# -----------------------------
-tk.Button(root, text="C", height=2, command=clear).pack(fill="both")
-tk.Button(root, text="=", height=2, command=calculate).pack(fill="both")
-tk.Button(history_frame, text="Clear History", command=clear_history).pack(pady=5)
-mode_button = tk.Button(
-    root,
-    text="Mode: RAD",
-    command=toggle_angle_mode,
-    height=2
+create_scientific_buttons(
+    parent=button_frame,
+    insert_function=insert_function,
+    insert_constant=insert_constant,
 )
 
-mode_button.pack(fill="both")
+create_memory_buttons(
+    parent=button_frame,
+    memory_add=memory_add,
+    memory_subtract=memory_subtract,
+    memory_recall=memory_recall,
+    memory_clear=memory_clear,
+)
 
-# -----------------------------
-# KEYBOARD SUPPORT
-# -----------------------------
+create_keypad(
+    parent=button_frame,
+    insert_value=safe_insert,
+    calculate=calculate,
+    clear_display=clear_display,
+    backspace=backspace,
+)
 
-def on_key(event):
-    """
-    Handles keyboard input for calculator.
-    """
-
-    key = event.char
-
-    # Allow digits and operators
-    if key in "0123456789.()*/-+^!":
-        safe_insert(key)
-        return "break"  # prevent default behavior
-
-    # Enter = calculate
-    elif event.keysym == "Return":
-        calculate()
-        return "break"
-
-    # Backspace = delete last character
-    elif event.keysym == "BackSpace":
-
-        current = display.get()
-
-        set_display(current[:-1])
-
-        return "break"
-    
-    elif event.keysym == "Escape":
-        clear()
-        return "break"
-    return "break"
+create_special_buttons(
+    parent=button_frame,
+    insert_value=safe_insert,
+)
 
 
-# Bind keyboard events
-root.bind("<Key>", on_key)
+# --------------------------------------------------
+# CONTROL BUTTONS
+# --------------------------------------------------
 
-# -----------------------------
-# START APP
-# -----------------------------
-root.mainloop()
+controls_frame = tk.Frame(calculator_frame)
+controls_frame.pack(fill="x", pady=(5, 0))
+
+mode_button = tk.Button(
+    controls_frame,
+    text=f"Mode: {ANGLE_MODE}",
+    command=toggle_angle_mode,
+    height=2,
+)
+
+mode_button.pack(side="left", fill="x", expand=True, padx=(0, 2))
+
+theme_button = tk.Button(
+    controls_frame,
+    text="Toggle Theme",
+    command=toggle_theme,
+    height=2,
+)
+
+theme_button.pack(side="left", fill="x", expand=True, padx=(2, 0))
+
+
+# --------------------------------------------------
+# KEYBOARD CONTROLS
+# --------------------------------------------------
+
+bind_keyboard(
+    root=root,
+    insert_callback=safe_insert,
+    calculate_callback=calculate,
+    backspace_callback=backspace,
+    clear_callback=clear_display,
+)
+
+
+# --------------------------------------------------
+# WINDOW CLOSING
+# --------------------------------------------------
+
+def close_application() -> None:
+    """Save window size and close the application."""
+    update_setting(settings, "window_width", root.winfo_width())
+    update_setting(settings, "window_height", root.winfo_height())
+
+    root.destroy()
+
+
+root.protocol("WM_DELETE_WINDOW", close_application)
+
+
+# --------------------------------------------------
+# INITIAL APPLICATION STATE
+# --------------------------------------------------
+
+replace_display("")
+update_status()
+apply_theme(root, str(settings.get("theme", "light")))
+
+
+# --------------------------------------------------
+# PUBLIC START FUNCTION
+# --------------------------------------------------
+
+def run() -> None:
+    """Start the Tkinter application event loop."""
+    root.mainloop()
