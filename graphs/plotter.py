@@ -67,6 +67,11 @@ DEFAULT_INTEGRAL_B = 1.0
 INTEGRATION_INTERVALS = 1000
 EXTREMA_DERIVATIVE_TOLERANCE = 1e-5
 EXTREMA_DUPLICATE_TOLERANCE = 1e-4
+INFLECTION_DUPLICATE_TOLERANCE = 1e-4
+SECOND_DERIVATIVE_STEP = 1e-4
+DEFAULT_RIEMANN_INTERVALS = 12
+MIN_RIEMANN_INTERVALS = 1
+MAX_RIEMANN_INTERVALS = 500
 
 
 # --------------------------------------------------
@@ -577,6 +582,10 @@ class GraphWindow:
         self.extrema_points: list[SpecialPoint] = []
         self.extrema_artists: list[Artist] = []
 
+        # Inflection points and concavity overlays.
+        self.inflection_points: list[SpecialPoint] = []
+        self.inflection_artists: list[Artist] = []
+
         self.live_update_job: str | None = None
 
         self.expression_variable = tk.StringVar(
@@ -602,6 +611,12 @@ class GraphWindow:
         )
         self.integral_b_variable = tk.StringVar(
             value=str(DEFAULT_INTEGRAL_B),
+        )
+        self.riemann_method_variable = tk.StringVar(
+            value="Midpoint",
+        )
+        self.riemann_intervals_variable = tk.IntVar(
+            value=DEFAULT_RIEMANN_INTERVALS,
         )
         self.status_variable = tk.StringVar(
             value="Add an expression to begin graphing.",
@@ -720,6 +735,7 @@ class GraphWindow:
         self._create_analysis_controls()
         self._create_calculus_controls()
         self._create_extrema_controls()
+        self._create_inflection_controls()
         self._create_range_controls()
         self._create_graph()
         self._create_status_bar()
@@ -1001,7 +1017,7 @@ class GraphWindow:
         )
 
     def _create_calculus_controls(self) -> None:
-        """Create derivative, tangent, and integration controls."""
+        """Create derivative, integration, and Riemann-sum controls."""
         frame = tk.LabelFrame(
             self.controls_frame,
             text="Calculus",
@@ -1131,12 +1147,107 @@ class GraphWindow:
             pady=(6, 2),
         )
 
+        ttk.Separator(
+            frame,
+            orient="horizontal",
+        ).grid(
+            row=7,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=8,
+        )
+
+        # ------------------------------------------
+        # Riemann-sum controls
+        # ------------------------------------------
+
+        tk.Label(
+            frame,
+            text="Riemann method:",
+        ).grid(
+            row=8,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+            pady=3,
+        )
+
+        method_menu = ttk.Combobox(
+            frame,
+            textvariable=self.riemann_method_variable,
+            values=(
+                "Left",
+                "Right",
+                "Midpoint",
+                "Trapezoid",
+            ),
+            state="readonly",
+            width=12,
+        )
+        method_menu.grid(
+            row=8,
+            column=1,
+            pady=3,
+        )
+
+        tk.Label(
+            frame,
+            text="Intervals n:",
+        ).grid(
+            row=9,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+            pady=3,
+        )
+
+        tk.Spinbox(
+            frame,
+            from_=MIN_RIEMANN_INTERVALS,
+            to=MAX_RIEMANN_INTERVALS,
+            textvariable=self.riemann_intervals_variable,
+            width=10,
+        ).grid(
+            row=9,
+            column=1,
+            pady=3,
+        )
+
+        tk.Scale(
+            frame,
+            from_=MIN_RIEMANN_INTERVALS,
+            to=100,
+            orient="horizontal",
+            variable=self.riemann_intervals_variable,
+            showvalue=False,
+            command=self._schedule_riemann_redraw,
+        ).grid(
+            row=10,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=3,
+        )
+
+        tk.Button(
+            frame,
+            text="Show Riemann Sum",
+            command=self.show_riemann_sum,
+        ).grid(
+            row=11,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(6, 2),
+        )
+
         tk.Button(
             frame,
             text="Clear Calculus Overlays",
             command=self.clear_calculus_artists,
         ).grid(
-            row=7,
+            row=12,
             column=0,
             columnspan=2,
             sticky="ew",
@@ -1202,6 +1313,79 @@ class GraphWindow:
             frame,
             text="Clear Extrema Markers",
             command=self.clear_extrema_markers,
+        ).pack(
+            fill="x",
+            pady=2,
+        )
+
+    def _create_inflection_controls(self) -> None:
+        """Create inflection-point and concavity controls."""
+        frame = tk.LabelFrame(
+            self.controls_frame,
+            text="Inflection and Concavity",
+            padx=8,
+            pady=8,
+        )
+        frame.pack(
+            fill="both",
+            expand=True,
+            pady=(0, 10),
+        )
+
+        container = tk.Frame(frame)
+        container.pack(
+            fill="both",
+            expand=True,
+        )
+
+        self.inflection_listbox = tk.Listbox(
+            container,
+            width=34,
+            height=6,
+            exportselection=False,
+        )
+        self.inflection_listbox.pack(
+            side="left",
+            fill="both",
+            expand=True,
+        )
+
+        scrollbar = tk.Scrollbar(
+            container,
+            orient="vertical",
+            command=self.inflection_listbox.yview,
+        )
+        scrollbar.pack(
+            side="right",
+            fill="y",
+        )
+
+        self.inflection_listbox.configure(
+            yscrollcommand=scrollbar.set,
+        )
+
+        tk.Button(
+            frame,
+            text="Find Inflection Points",
+            command=self.find_inflection_points,
+        ).pack(
+            fill="x",
+            pady=(8, 2),
+        )
+
+        tk.Button(
+            frame,
+            text="Show Concavity",
+            command=self.show_concavity,
+        ).pack(
+            fill="x",
+            pady=2,
+        )
+
+        tk.Button(
+            frame,
+            text="Clear Inflection Overlays",
+            command=self.clear_inflection_markers,
         ).pack(
             fill="x",
             pady=2,
@@ -1362,6 +1546,11 @@ class GraphWindow:
             self._select_extrema_result,
         )
 
+        self.inflection_listbox.bind(
+            "<<ListboxSelect>>",
+            self._select_inflection_result,
+        )
+
         self.expression_variable.trace_add(
             "write",
             self._schedule_live_update,
@@ -1480,6 +1669,7 @@ class GraphWindow:
         self._clear_analysis_artists(redraw=False)
         self.clear_calculus_artists(redraw=False)
         self.clear_extrema_markers(redraw=False)
+        self.clear_inflection_markers(redraw=False)
         self.plotted_series.clear()
 
         self.axes.clear()
@@ -1652,6 +1842,7 @@ class GraphWindow:
         self.clear_analysis_markers(redraw=False)
         self.clear_calculus_artists(redraw=False)
         self.clear_extrema_markers(redraw=False)
+        self.clear_inflection_markers(redraw=False)
 
         self.axes.clear()
         self._reset_axes_content()
@@ -1710,6 +1901,7 @@ class GraphWindow:
         self.clear_analysis_markers(redraw=False)
         self.clear_calculus_artists(redraw=False)
         self.clear_extrema_markers(redraw=False)
+        self.clear_inflection_markers(redraw=False)
         self.plotted_series.clear()
 
         self.axes.clear()
@@ -2225,6 +2417,351 @@ class GraphWindow:
         return weighted_sum * width / 3
 
     # --------------------------------------------------
+    # RIEMANN SUM VISUALIZER
+    # --------------------------------------------------
+
+    def _schedule_riemann_redraw(
+        self,
+        _value: str,
+    ) -> None:
+        """
+        Redraw the Riemann visualization when the slider moves.
+
+        The redraw only occurs when a function is selected and the
+        integration bounds are valid.
+        """
+        if not hasattr(self, "canvas"):
+            return
+
+        selected_index = self._get_selected_expression_index()
+
+        if selected_index is None:
+            return
+
+        try:
+            float(self.integral_a_variable.get())
+            float(self.integral_b_variable.get())
+        except ValueError:
+            return
+
+        self.show_riemann_sum(
+            show_errors=False,
+        )
+
+    def show_riemann_sum(
+        self,
+        *,
+        show_errors: bool = True,
+    ) -> None:
+        """Draw and calculate a Riemann-sum approximation."""
+        selected_index = self._get_selected_expression_index()
+
+        if selected_index is None:
+            if show_errors:
+                messagebox.showinfo(
+                    "No Function Selected",
+                    "Select a function before showing a Riemann sum.",
+                    parent=self.window,
+                )
+            return
+
+        try:
+            original_a = float(self.integral_a_variable.get())
+            original_b = float(self.integral_b_variable.get())
+            interval_count = int(
+                self.riemann_intervals_variable.get()
+            )
+        except (ValueError, tk.TclError):
+            if show_errors:
+                messagebox.showerror(
+                    "Invalid Riemann Settings",
+                    "The bounds and interval count must be valid numbers.",
+                    parent=self.window,
+                )
+            return
+
+        if original_a == original_b:
+            if show_errors:
+                messagebox.showinfo(
+                    "Zero-Width Interval",
+                    "The Riemann sum is 0 because both bounds are equal.",
+                    parent=self.window,
+                )
+            return
+
+        if not (
+            MIN_RIEMANN_INTERVALS
+            <= interval_count
+            <= MAX_RIEMANN_INTERVALS
+        ):
+            if show_errors:
+                messagebox.showerror(
+                    "Invalid Interval Count",
+                    f"Intervals must be between "
+                    f"{MIN_RIEMANN_INTERVALS} and "
+                    f"{MAX_RIEMANN_INTERVALS}.",
+                    parent=self.window,
+                )
+            return
+
+        method = self.riemann_method_variable.get()
+        expression = self.expressions[selected_index].expression
+
+        lower_bound = min(original_a, original_b)
+        upper_bound = max(original_a, original_b)
+        orientation = 1.0 if original_a < original_b else -1.0
+
+        width = (
+            upper_bound - lower_bound
+        ) / interval_count
+
+        self.clear_calculus_artists(redraw=False)
+
+        try:
+            approximation = self._draw_riemann_geometry(
+                expression=expression,
+                lower_bound=lower_bound,
+                upper_bound=upper_bound,
+                interval_count=interval_count,
+                method=method,
+            )
+        except (
+            ArithmeticError,
+            TypeError,
+            ValueError,
+            OverflowError,
+        ) as error:
+            if show_errors:
+                messagebox.showerror(
+                    "Riemann Sum Error",
+                    f"Could not calculate the Riemann sum:\n\n{error}",
+                    parent=self.window,
+                )
+            return
+
+        approximation *= orientation
+
+        exact_integral: float | None
+
+        try:
+            exact_integral = orientation * self._simpson_integral(
+                expression,
+                lower_bound,
+                upper_bound,
+                max(
+                    INTEGRATION_INTERVALS,
+                    interval_count * 2,
+                ),
+            )
+        except (
+            ArithmeticError,
+            TypeError,
+            ValueError,
+            OverflowError,
+        ):
+            exact_integral = None
+
+        if exact_integral is None:
+            annotation_text = (
+                f"{method} sum\n"
+                f"n = {interval_count}\n"
+                f"Approx. = {approximation:.10g}"
+            )
+            status_text = (
+                f"{method} Riemann sum for y = {expression}: "
+                f"{approximation:.10g}"
+            )
+        else:
+            error_value = approximation - exact_integral
+
+            annotation_text = (
+                f"{method} sum\n"
+                f"n = {interval_count}\n"
+                f"Approx. = {approximation:.10g}\n"
+                f"Integral ≈ {exact_integral:.10g}\n"
+                f"Error ≈ {error_value:.6g}"
+            )
+
+            status_text = (
+                f"{method} Riemann sum for y = {expression}: "
+                f"{approximation:.10g}; "
+                f"integral ≈ {exact_integral:.10g}; "
+                f"error ≈ {error_value:.6g}."
+            )
+
+        midpoint_x = (
+            lower_bound + upper_bound
+        ) / 2
+
+        try:
+            midpoint_y = evaluate_graph_expression(
+                expression,
+                midpoint_x,
+            )
+        except (
+            ArithmeticError,
+            TypeError,
+            ValueError,
+            OverflowError,
+        ):
+            midpoint_y = 0.0
+
+        annotation = self.axes.annotate(
+            annotation_text,
+            xy=(midpoint_x, midpoint_y),
+            xytext=(12, 18),
+            textcoords="offset points",
+            bbox={
+                "boxstyle": "round,pad=0.4",
+                "facecolor": "white",
+                "alpha": 0.92,
+            },
+            arrowprops={
+                "arrowstyle": "->",
+            },
+            zorder=14,
+        )
+
+        lower_line = self.axes.axvline(
+            lower_bound,
+            linestyle=":",
+            linewidth=1.2,
+        )
+
+        upper_line = self.axes.axvline(
+            upper_bound,
+            linestyle=":",
+            linewidth=1.2,
+        )
+
+        self.calculus_artists.extend(
+            [
+                lower_line,
+                upper_line,
+                annotation,
+            ]
+        )
+
+        self.axes.legend()
+        self.canvas.draw_idle()
+
+        self.status_variable.set(status_text)
+
+    def _draw_riemann_geometry(
+        self,
+        *,
+        expression: str,
+        lower_bound: float,
+        upper_bound: float,
+        interval_count: int,
+        method: str,
+    ) -> float:
+        """
+        Draw the chosen Riemann geometry and return its approximation.
+        """
+        width = (
+            upper_bound - lower_bound
+        ) / interval_count
+
+        approximation = 0.0
+
+        if method == "Trapezoid":
+            for index in range(interval_count):
+                x_left = lower_bound + index * width
+                x_right = x_left + width
+
+                y_left = evaluate_graph_expression(
+                    expression,
+                    x_left,
+                )
+                y_right = evaluate_graph_expression(
+                    expression,
+                    x_right,
+                )
+
+                if (
+                    not math.isfinite(y_left)
+                    or not math.isfinite(y_right)
+                ):
+                    raise ValueError(
+                        "The function is undefined inside the interval."
+                    )
+
+                polygon = self.axes.fill(
+                    [
+                        x_left,
+                        x_left,
+                        x_right,
+                        x_right,
+                    ],
+                    [
+                        0,
+                        y_left,
+                        y_right,
+                        0,
+                    ],
+                    alpha=0.25,
+                    edgecolor="black",
+                    linewidth=0.7,
+                    label=(
+                        f"{method} Riemann sum"
+                        if index == 0
+                        else "_nolegend_"
+                    ),
+                )[0]
+
+                self.calculus_artists.append(polygon)
+
+                approximation += (
+                    y_left + y_right
+                ) * width / 2
+
+            return approximation
+
+        for index in range(interval_count):
+            x_left = lower_bound + index * width
+
+            if method == "Left":
+                sample_x = x_left
+            elif method == "Right":
+                sample_x = x_left + width
+            else:
+                sample_x = x_left + width / 2
+
+            sample_y = evaluate_graph_expression(
+                expression,
+                sample_x,
+            )
+
+            if not math.isfinite(sample_y):
+                raise ValueError(
+                    "The function is undefined inside the interval."
+                )
+
+            rectangle = self.axes.bar(
+                x_left,
+                sample_y,
+                width=width,
+                align="edge",
+                alpha=0.28,
+                edgecolor="black",
+                linewidth=0.7,
+                label=(
+                    f"{method} Riemann sum"
+                    if index == 0
+                    else "_nolegend_"
+                ),
+            )
+
+            self.calculus_artists.extend(
+                list(rectangle)
+            )
+
+            approximation += sample_y * width
+
+        return approximation
+
+    # --------------------------------------------------
     # LOCAL MINIMA AND MAXIMA
     # --------------------------------------------------
 
@@ -2485,6 +3022,362 @@ class GraphWindow:
                 pass
 
         self.extrema_artists.clear()
+
+        if redraw:
+            self.canvas.draw_idle()
+
+    # --------------------------------------------------
+    # INFLECTION POINTS AND CONCAVITY
+    # --------------------------------------------------
+
+    def find_inflection_points(self) -> None:
+        """Detect inflection points for the selected function."""
+        selected_index = self._get_selected_expression_index()
+
+        if selected_index is None:
+            messagebox.showinfo(
+                "No Function Selected",
+                "Select a function before searching for inflection points.",
+                parent=self.window,
+            )
+            return
+
+        settings = self._read_graph_settings()
+
+        if settings is None:
+            return
+
+        x_min, x_max, point_count = settings
+        expression = self.expressions[selected_index].expression
+
+        x_values = self._generate_x_values(
+            x_min,
+            x_max,
+            point_count,
+        )
+
+        second_derivatives: list[float | None] = []
+
+        for x_value in x_values:
+            try:
+                value = self._numerical_second_derivative(
+                    expression,
+                    x_value,
+                )
+
+                if math.isfinite(value):
+                    second_derivatives.append(value)
+                else:
+                    second_derivatives.append(None)
+
+            except (
+                ArithmeticError,
+                TypeError,
+                ValueError,
+                OverflowError,
+            ):
+                second_derivatives.append(None)
+
+        detected: list[SpecialPoint] = []
+
+        for index in range(len(x_values) - 1):
+            second1 = second_derivatives[index]
+            second2 = second_derivatives[index + 1]
+
+            if second1 is None or second2 is None:
+                continue
+
+            # An inflection point requires a concavity sign change.
+            if second1 * second2 >= 0:
+                continue
+
+            inflection_x = self._linear_zero_interpolation(
+                x_values[index],
+                second1,
+                x_values[index + 1],
+                second2,
+            )
+
+            try:
+                inflection_y = evaluate_graph_expression(
+                    expression,
+                    inflection_x,
+                )
+            except (
+                ArithmeticError,
+                TypeError,
+                ValueError,
+                OverflowError,
+            ):
+                continue
+
+            if not math.isfinite(inflection_y):
+                continue
+
+            detected.append(
+                SpecialPoint(
+                    point_type="inflection point",
+                    x=inflection_x,
+                    y=inflection_y,
+                    first_expression=expression,
+                )
+            )
+
+        self.inflection_points = self._deduplicate_inflection_points(
+            detected
+        )
+
+        self._refresh_inflection_list()
+        self._draw_inflection_markers()
+
+        self.status_variable.set(
+            f"Found {len(self.inflection_points)} inflection point(s) "
+            f"for y = {expression}."
+        )
+
+    def show_concavity(self) -> None:
+        """Highlight concave-up and concave-down regions."""
+        selected_index = self._get_selected_expression_index()
+
+        if selected_index is None:
+            messagebox.showinfo(
+                "No Function Selected",
+                "Select a function before displaying concavity.",
+                parent=self.window,
+            )
+            return
+
+        settings = self._read_graph_settings()
+
+        if settings is None:
+            return
+
+        x_min, x_max, point_count = settings
+        expression = self.expressions[selected_index].expression
+
+        x_values = self._generate_x_values(
+            x_min,
+            x_max,
+            point_count,
+        )
+
+        y_values: list[float] = []
+        concave_up: list[bool] = []
+        concave_down: list[bool] = []
+
+        for x_value in x_values:
+            try:
+                y_value = evaluate_graph_expression(
+                    expression,
+                    x_value,
+                )
+                second_derivative = self._numerical_second_derivative(
+                    expression,
+                    x_value,
+                )
+
+                if (
+                    not math.isfinite(y_value)
+                    or not math.isfinite(second_derivative)
+                ):
+                    raise ValueError("Undefined point.")
+
+                y_values.append(y_value)
+                concave_up.append(second_derivative > 0)
+                concave_down.append(second_derivative < 0)
+
+            except (
+                ArithmeticError,
+                TypeError,
+                ValueError,
+                OverflowError,
+            ):
+                y_values.append(float("nan"))
+                concave_up.append(False)
+                concave_down.append(False)
+
+        self.clear_inflection_markers(redraw=False)
+
+        up_artist = self.axes.fill_between(
+            x_values,
+            y_values,
+            0,
+            where=concave_up,
+            alpha=0.15,
+            interpolate=True,
+            label="Concave up",
+        )
+
+        down_artist = self.axes.fill_between(
+            x_values,
+            y_values,
+            0,
+            where=concave_down,
+            alpha=0.15,
+            interpolate=True,
+            label="Concave down",
+        )
+
+        self.inflection_artists.extend(
+            [
+                up_artist,
+                down_artist,
+            ]
+        )
+
+        self.axes.legend()
+        self.canvas.draw_idle()
+
+        self.status_variable.set(
+            f"Displayed concavity regions for y = {expression}."
+        )
+
+    @staticmethod
+    def _numerical_second_derivative(
+        expression: str,
+        x_value: float,
+    ) -> float:
+        """Estimate f''(x) with a central second-difference formula."""
+        step = SECOND_DERIVATIVE_STEP * max(1.0, abs(x_value))
+
+        left_value = evaluate_graph_expression(
+            expression,
+            x_value - step,
+        )
+        center_value = evaluate_graph_expression(
+            expression,
+            x_value,
+        )
+        right_value = evaluate_graph_expression(
+            expression,
+            x_value + step,
+        )
+
+        return (
+            left_value
+            - 2 * center_value
+            + right_value
+        ) / (step * step)
+
+    def _deduplicate_inflection_points(
+        self,
+        points: list[SpecialPoint],
+    ) -> list[SpecialPoint]:
+        """Remove near-duplicate inflection points."""
+        unique: list[SpecialPoint] = []
+
+        for point in sorted(points, key=lambda item: item.x):
+            duplicate = any(
+                math.isclose(
+                    point.x,
+                    existing.x,
+                    abs_tol=INFLECTION_DUPLICATE_TOLERANCE,
+                )
+                and math.isclose(
+                    point.y,
+                    existing.y,
+                    abs_tol=INFLECTION_DUPLICATE_TOLERANCE,
+                )
+                for existing in unique
+            )
+
+            if not duplicate:
+                unique.append(point)
+
+        return unique
+
+    def _refresh_inflection_list(self) -> None:
+        """Display detected inflection points."""
+        self.inflection_listbox.delete(0, tk.END)
+
+        for point in self.inflection_points:
+            self.inflection_listbox.insert(
+                tk.END,
+                (
+                    f"Inflection: y = {point.first_expression} "
+                    f"at ({point.x:.8g}, {point.y:.8g})"
+                ),
+            )
+
+        if not self.inflection_points:
+            self.inflection_listbox.insert(
+                tk.END,
+                "No inflection points detected in the current range.",
+            )
+
+    def _draw_inflection_markers(self) -> None:
+        """Draw detected inflection-point markers."""
+        self._clear_inflection_artists(redraw=False)
+
+        for point in self.inflection_points:
+            marker = self.axes.scatter(
+                [point.x],
+                [point.y],
+                marker="D",
+                s=75,
+                zorder=10,
+                label="_nolegend_",
+            )
+
+            self.inflection_artists.append(marker)
+
+        self.canvas.draw_idle()
+
+    def _select_inflection_result(
+        self,
+        _event: tk.Event,
+    ) -> None:
+        """Highlight the selected inflection point."""
+        selection = self.inflection_listbox.curselection()
+
+        if not selection:
+            return
+
+        index = int(selection[0])
+
+        if index >= len(self.inflection_points):
+            return
+
+        point = self.inflection_points[index]
+
+        self._show_point_marker(
+            SelectedPoint(
+                expression="inflection point",
+                x=point.x,
+                y=point.y,
+                distance=0.0,
+            )
+        )
+
+    def clear_inflection_markers(
+        self,
+        redraw: bool = True,
+    ) -> None:
+        """Clear inflection points and concavity overlays."""
+        self.inflection_points.clear()
+
+        if hasattr(self, "inflection_listbox"):
+            self.inflection_listbox.delete(0, tk.END)
+
+        self._clear_inflection_artists(
+            redraw=redraw,
+        )
+
+    def _clear_inflection_artists(
+        self,
+        redraw: bool = True,
+    ) -> None:
+        """Safely remove inflection and concavity artists."""
+        for artist in self.inflection_artists:
+            try:
+                artist.remove()
+            except (
+                ValueError,
+                NotImplementedError,
+            ):
+                pass
+
+        self.inflection_artists.clear()
 
         if redraw:
             self.canvas.draw_idle()
