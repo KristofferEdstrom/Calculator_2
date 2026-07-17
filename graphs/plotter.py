@@ -39,6 +39,7 @@ from matplotlib.backends.backend_tkagg import (
 from matplotlib.figure import Figure
 
 from graphs.evaluator import evaluate_graph_expression
+from ui.tooltip import Tooltip
 
 
 # --------------------------------------------------
@@ -97,6 +98,9 @@ PARAMETER_DEFAULT_VALUE = 1.0
 PARAMETER_MIN_VALUE = -10.0
 PARAMETER_MAX_VALUE = 10.0
 PARAMETER_RESOLUTION = 0.1
+DEFAULT_ANIMATION_DELAY_MS = 60
+MIN_ANIMATION_DELAY_MS = 15
+MAX_ANIMATION_DELAY_MS = 300
 
 # Names that belong to the expression language rather than sliders.
 RESERVED_PARAMETER_NAMES = {
@@ -684,6 +688,17 @@ class GraphWindow:
         # a*sin(b*x) + c.
         self.parameter_values: dict[str, tk.DoubleVar] = {}
 
+        # Parameter animation state.
+        self.animation_job: str | None = None
+        self.animation_direction = 1
+        self.animation_parameter_variable = tk.StringVar(value="")
+        self.animation_delay_variable = tk.IntVar(
+            value=DEFAULT_ANIMATION_DELAY_MS,
+        )
+        self.animation_mode_variable = tk.StringVar(
+            value="Ping-pong",
+        )
+
         self.live_update_job: str | None = None
 
         self.expression_variable = tk.StringVar(
@@ -756,10 +771,46 @@ class GraphWindow:
         self._create_layout()
         self._bind_events()
 
+        self.window.protocol(
+            "WM_DELETE_WINDOW",
+            self._close_window,
+        )
+
         self.expression_entry.focus_set()
 
         if initial_expression.strip():
             self.add_expression()
+
+    def _close_window(self) -> None:
+        """Stop scheduled callbacks before closing the graph window."""
+        self.pause_parameter_animation()
+
+        if self.live_update_job is not None:
+            try:
+                self.window.after_cancel(self.live_update_job)
+            except (ValueError, tk.TclError):
+                pass
+            self.live_update_job = None
+
+        self.window.destroy()
+
+    def _attach_tooltip(
+        self,
+        widget: tk.Widget,
+        text: str,
+    ) -> tk.Widget:
+        """
+        Attach a tooltip and return the widget.
+
+        Returning the widget makes this helper convenient when widgets
+        are created and assigned in a single expression.
+        """
+        Tooltip(
+            widget,
+            text,
+        )
+
+        return widget
 
     # --------------------------------------------------
     # LAYOUT
@@ -963,28 +1014,38 @@ class GraphWindow:
             pady=5,
         )
 
-        tk.Button(
+        add_button = tk.Button(
             frame,
             text="Add / Plot",
             command=self.add_expression,
-        ).grid(
+        )
+        add_button.grid(
             row=1,
             column=0,
             columnspan=3,
             sticky="ew",
             pady=(5, 2),
         )
+        self._attach_tooltip(
+            add_button,
+            "Add the expression to the function list and plot it.",
+        )
 
-        tk.Button(
+        update_button = tk.Button(
             frame,
             text="Update Selected",
             command=self.update_selected_expression,
-        ).grid(
+        )
+        update_button.grid(
             row=2,
             column=0,
             columnspan=3,
             sticky="ew",
             pady=2,
+        )
+        self._attach_tooltip(
+            update_button,
+            "Replace the selected function with the expression above.",
         )
 
         tk.Checkbutton(
@@ -1048,40 +1109,60 @@ class GraphWindow:
             yscrollcommand=scrollbar.set,
         )
 
-        tk.Button(
+        visibility_button = tk.Button(
             frame,
             text="Show / Hide Selected",
             command=self.toggle_selected_expression,
-        ).pack(
+        )
+        visibility_button.pack(
             fill="x",
             pady=(8, 2),
         )
+        self._attach_tooltip(
+            visibility_button,
+            "Toggle visibility for the selected function.",
+        )
 
-        tk.Button(
+        remove_button = tk.Button(
             frame,
             text="Remove Selected",
             command=self.remove_selected_expression,
-        ).pack(
+        )
+        remove_button.pack(
             fill="x",
             pady=2,
         )
+        self._attach_tooltip(
+            remove_button,
+            "Remove the selected function from the graph.",
+        )
 
-        tk.Button(
+        table_button = tk.Button(
             frame,
             text="Open Table of Values",
             command=self.open_values_table,
-        ).pack(
+        )
+        table_button.pack(
             fill="x",
             pady=2,
         )
+        self._attach_tooltip(
+            table_button,
+            "Generate x and f(x) values for the selected function.",
+        )
 
-        tk.Button(
+        clear_all_button = tk.Button(
             frame,
             text="Clear All",
             command=self.clear_all_expressions,
-        ).pack(
+        )
+        clear_all_button.pack(
             fill="x",
             pady=2,
+        )
+        self._attach_tooltip(
+            clear_all_button,
+            "Remove every function and graph overlay.",
         )
 
     def _create_style_controls(self) -> None:
@@ -1230,17 +1311,14 @@ class GraphWindow:
         frame.columnconfigure(1, weight=1)
 
     def _create_parameter_controls(self) -> None:
-        """Create the dynamic symbolic-parameter slider panel."""
+        """Create symbolic-parameter sliders and animation controls."""
         frame = tk.LabelFrame(
             self.controls_frame,
             text="Parameter Sliders",
             padx=8,
             pady=8,
         )
-        frame.pack(
-            fill="x",
-            pady=(0, 10),
-        )
+        frame.pack(fill="x", pady=(0, 10))
 
         tk.Label(
             frame,
@@ -1250,43 +1328,151 @@ class GraphWindow:
             ),
             justify="left",
             wraplength=255,
-        ).pack(
-            fill="x",
-            pady=(0, 6),
-        )
+        ).pack(fill="x", pady=(0, 6))
 
         self.parameter_sliders_frame = tk.Frame(frame)
-        self.parameter_sliders_frame.pack(
-            fill="x",
-            expand=True,
-        )
+        self.parameter_sliders_frame.pack(fill="x", expand=True)
 
         tk.Button(
             frame,
             text="Refresh Parameters",
             command=self._rebuild_parameter_sliders,
-        ).pack(
-            fill="x",
-            pady=(8, 2),
-        )
+        ).pack(fill="x", pady=(8, 2))
 
         tk.Button(
             frame,
             text="Reset Parameters to 1",
             command=self.reset_parameters,
-        ).pack(
+        ).pack(fill="x", pady=2)
+
+        ttk.Separator(frame, orient="horizontal").pack(
             fill="x",
-            pady=2,
+            pady=8,
         )
+
+        animation_frame = tk.Frame(frame)
+        animation_frame.pack(fill="x")
+
+        tk.Label(animation_frame, text="Animate:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+            pady=3,
+        )
+
+        self.animation_parameter_menu = ttk.Combobox(
+            animation_frame,
+            textvariable=self.animation_parameter_variable,
+            values=(),
+            state="readonly",
+            width=12,
+        )
+        self.animation_parameter_menu.grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            pady=3,
+        )
+
+        tk.Label(animation_frame, text="Mode:").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+            pady=3,
+        )
+
+        ttk.Combobox(
+            animation_frame,
+            textvariable=self.animation_mode_variable,
+            values=("Ping-pong", "Loop", "One-shot"),
+            state="readonly",
+            width=12,
+        ).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            pady=3,
+        )
+
+        tk.Label(animation_frame, text="Speed:").grid(
+            row=2,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+            pady=3,
+        )
+
+        tk.Scale(
+            animation_frame,
+            from_=MAX_ANIMATION_DELAY_MS,
+            to=MIN_ANIMATION_DELAY_MS,
+            orient="horizontal",
+            variable=self.animation_delay_variable,
+            showvalue=False,
+        ).grid(
+            row=2,
+            column=1,
+            sticky="ew",
+            pady=3,
+        )
+
+        button_row = tk.Frame(animation_frame)
+        button_row.grid(
+            row=3,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(6, 0),
+        )
+
+        self.animation_play_button = tk.Button(
+            button_row,
+            text="▶ Play",
+            command=self.start_parameter_animation,
+        )
+        self._attach_tooltip(
+            self.animation_play_button,
+            "Animate the selected symbolic parameter.",
+        )
+        self.animation_play_button.pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=(0, 2),
+        )
+
+        tk.Button(
+            button_row,
+            text="⏸ Pause",
+            command=self.pause_parameter_animation,
+        ).pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=2,
+        )
+
+        tk.Button(
+            button_row,
+            text="↺ Reset",
+            command=self.reset_animation_parameter,
+        ).pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=(2, 0),
+        )
+
+        animation_frame.columnconfigure(1, weight=1)
 
         self.parameter_empty_label = tk.Label(
             self.parameter_sliders_frame,
             text="No symbolic parameters detected.",
             anchor="w",
         )
-        self.parameter_empty_label.pack(
-            fill="x",
-        )
+        self.parameter_empty_label.pack(fill="x")
 
     def _create_analysis_controls(self) -> None:
         """Create root and intersection analysis controls."""
@@ -1334,13 +1520,18 @@ class GraphWindow:
             yscrollcommand=scrollbar.set,
         )
 
-        tk.Button(
+        analysis_button = tk.Button(
             frame,
             text="Find Roots and Intersections",
             command=self.find_roots_and_intersections,
-        ).pack(
+        )
+        analysis_button.pack(
             fill="x",
             pady=(8, 2),
+        )
+        self._attach_tooltip(
+            analysis_button,
+            "Find x-intercepts and intersections among visible functions.",
         )
 
         tk.Button(
@@ -1390,28 +1581,38 @@ class GraphWindow:
             pady=3,
         )
 
-        tk.Button(
+        derivative_button = tk.Button(
             frame,
             text="Derivative + Tangent",
             command=self.show_derivative_and_tangent,
-        ).grid(
+        )
+        derivative_button.grid(
             row=1,
             column=0,
             columnspan=2,
             sticky="ew",
             pady=(6, 2),
         )
+        self._attach_tooltip(
+            derivative_button,
+            "Estimate f'(x) and draw the tangent line at the chosen x-value.",
+        )
 
-        tk.Button(
+        normal_button = tk.Button(
             frame,
             text="Normal Line",
             command=self.show_normal_line,
-        ).grid(
+        )
+        normal_button.grid(
             row=2,
             column=0,
             columnspan=2,
             sticky="ew",
             pady=2,
+        )
+        self._attach_tooltip(
+            normal_button,
+            "Draw the line perpendicular to the tangent at the chosen point.",
         )
 
         tk.Button(
@@ -1483,16 +1684,21 @@ class GraphWindow:
             pady=3,
         )
 
-        tk.Button(
+        integral_button = tk.Button(
             frame,
             text="Integrate + Shade Area",
             command=self.show_integral_area,
-        ).grid(
+        )
+        integral_button.grid(
             row=7,
             column=0,
             columnspan=2,
             sticky="ew",
             pady=(6, 2),
+        )
+        self._attach_tooltip(
+            integral_button,
+            "Approximate the definite integral and shade the selected interval.",
         )
 
         ttk.Separator(
@@ -1552,16 +1758,21 @@ class GraphWindow:
             pady=3,
         )
 
-        tk.Button(
+        arc_button = tk.Button(
             frame,
             text="Calculate Arc Length",
             command=self.show_arc_length,
-        ).grid(
+        )
+        arc_button.grid(
             row=11,
             column=0,
             columnspan=2,
             sticky="ew",
             pady=(6, 2),
+        )
+        self._attach_tooltip(
+            arc_button,
+            "Approximate the curve length between the selected bounds.",
         )
 
         ttk.Separator(
@@ -1646,16 +1857,21 @@ class GraphWindow:
             pady=3,
         )
 
-        tk.Button(
+        riemann_button = tk.Button(
             frame,
             text="Show Riemann Sum",
             command=self.show_riemann_sum,
-        ).grid(
+        )
+        riemann_button.grid(
             row=16,
             column=0,
             columnspan=2,
             sticky="ew",
             pady=(6, 2),
+        )
+        self._attach_tooltip(
+            riemann_button,
+            "Visualize a left, right, midpoint, or trapezoid approximation.",
         )
 
     def _create_extrema_controls(self) -> None:
@@ -1704,13 +1920,18 @@ class GraphWindow:
             yscrollcommand=scrollbar.set,
         )
 
-        tk.Button(
+        extrema_button = tk.Button(
             frame,
             text="Find Local Extrema",
             command=self.find_local_extrema,
-        ).pack(
+        )
+        extrema_button.pack(
             fill="x",
             pady=(8, 2),
+        )
+        self._attach_tooltip(
+            extrema_button,
+            "Detect local minima and maxima in the current graph range.",
         )
 
         tk.Button(
@@ -1768,22 +1989,32 @@ class GraphWindow:
             yscrollcommand=scrollbar.set,
         )
 
-        tk.Button(
+        inflection_button = tk.Button(
             frame,
             text="Find Inflection Points",
             command=self.find_inflection_points,
-        ).pack(
+        )
+        inflection_button.pack(
             fill="x",
             pady=(8, 2),
         )
+        self._attach_tooltip(
+            inflection_button,
+            "Detect points where the graph changes concavity.",
+        )
 
-        tk.Button(
+        concavity_button = tk.Button(
             frame,
             text="Show Concavity",
             command=self.show_concavity,
-        ).pack(
+        )
+        concavity_button.pack(
             fill="x",
             pady=2,
+        )
+        self._attach_tooltip(
+            concavity_button,
+            "Highlight concave-up and concave-down graph regions.",
         )
 
         tk.Button(
@@ -1808,31 +2039,46 @@ class GraphWindow:
             pady=(0, 10),
         )
 
-        tk.Button(
+        save_session_button = tk.Button(
             frame,
             text="Save Session",
             command=self.save_session,
-        ).pack(
+        )
+        save_session_button.pack(
             fill="x",
             pady=2,
         )
+        self._attach_tooltip(
+            save_session_button,
+            "Save functions, styles, ranges, parameters, and settings.",
+        )
 
-        tk.Button(
+        load_session_button = tk.Button(
             frame,
             text="Load Session",
             command=self.load_session,
-        ).pack(
+        )
+        load_session_button.pack(
             fill="x",
             pady=2,
         )
+        self._attach_tooltip(
+            load_session_button,
+            "Restore a previously saved graph session.",
+        )
 
-        tk.Button(
+        new_session_button = tk.Button(
             frame,
             text="New Session",
             command=self.new_session,
-        ).pack(
+        )
+        new_session_button.pack(
             fill="x",
             pady=2,
+        )
+        self._attach_tooltip(
+            new_session_button,
+            "Clear the current workspace and restore default settings.",
         )
 
     def _create_theme_export_controls(self) -> None:
@@ -1916,38 +2162,50 @@ class GraphWindow:
             pady=2,
         )
 
-        tk.Button(
+        export_png_button = tk.Button(
             frame,
             text="Export PNG",
             command=lambda: self.export_graph("png"),
-        ).grid(
+        )
+        export_png_button.grid(
             row=4,
             column=0,
             sticky="ew",
-            pady=(8, 2),
+            pady=(8, 2),        )
+        self._attach_tooltip(
+            export_png_button,
+            "Export the current graph as a PNG image.",
         )
 
-        tk.Button(
+        export_svg_button = tk.Button(
             frame,
             text="Export SVG",
             command=lambda: self.export_graph("svg"),
-        ).grid(
+        )
+        export_svg_button.grid(
             row=4,
             column=1,
             sticky="ew",
-            pady=(8, 2),
+            pady=(8, 2),        )
+        self._attach_tooltip(
+            export_svg_button,
+            "Export the current graph as a scalable SVG image.",
         )
 
-        tk.Button(
+        export_pdf_button = tk.Button(
             frame,
             text="Export PDF",
             command=lambda: self.export_graph("pdf"),
-        ).grid(
+        )
+        export_pdf_button.grid(
             row=5,
             column=0,
             columnspan=2,
             sticky="ew",
-            pady=2,
+            pady=2,        )
+        self._attach_tooltip(
+            export_pdf_button,
+            "Export the current graph as a PDF document.",
         )
 
         ttk.Separator(
@@ -1961,40 +2219,52 @@ class GraphWindow:
             pady=8,
         )
 
-        tk.Button(
+        parametric_button = tk.Button(
             frame,
             text="Open Parametric Plotter",
             command=self.open_parametric_plotter,
-        ).grid(
+        )
+        parametric_button.grid(
             row=7,
             column=0,
             columnspan=2,
             sticky="ew",
-            pady=2,
+            pady=2,        )
+        self._attach_tooltip(
+            parametric_button,
+            "Open the x(t), y(t) parametric graph workspace.",
         )
 
-        tk.Button(
+        polar_button = tk.Button(
             frame,
             text="Open Polar Plotter",
             command=self.open_polar_plotter,
-        ).grid(
+        )
+        polar_button.grid(
             row=8,
             column=0,
             columnspan=2,
             sticky="ew",
-            pady=2,
+            pady=2,        )
+        self._attach_tooltip(
+            polar_button,
+            "Open the r(theta) polar graph workspace.",
         )
 
-        tk.Button(
+        piecewise_button = tk.Button(
             frame,
             text="Open Piecewise Plotter",
             command=self.open_piecewise_plotter,
-        ).grid(
+        )
+        piecewise_button.grid(
             row=9,
             column=0,
             columnspan=2,
             sticky="ew",
-            pady=2,
+            pady=2,        )
+        self._attach_tooltip(
+            piecewise_button,
+            "Open the condition-based piecewise function workspace.",
         )
 
         frame.columnconfigure(1, weight=1)
@@ -2251,10 +2521,26 @@ class GraphWindow:
                 text="No symbolic parameters detected.",
                 anchor="w",
             )
-            self.parameter_empty_label.pack(
-                fill="x",
-            )
+            self.parameter_empty_label.pack(fill="x")
+
+            self.pause_parameter_animation()
+            self.animation_parameter_menu.configure(values=())
+            self.animation_parameter_variable.set("")
             return
+
+        parameter_names = tuple(self.parameter_values)
+
+        self.animation_parameter_menu.configure(
+            values=parameter_names,
+        )
+
+        if (
+            self.animation_parameter_variable.get()
+            not in self.parameter_values
+        ):
+            self.animation_parameter_variable.set(
+                parameter_names[0]
+            )
 
         for row, (name, variable) in enumerate(
             self.parameter_values.items()
@@ -2350,6 +2636,114 @@ class GraphWindow:
         return evaluate_graph_expression(
             resolved_expression,
             x_value,
+        )
+
+    # --------------------------------------------------
+    # PARAMETER ANIMATION
+    # --------------------------------------------------
+
+    def start_parameter_animation(self) -> None:
+        """Start animating the selected symbolic parameter."""
+        parameter_name = self.animation_parameter_variable.get()
+
+        if parameter_name not in self.parameter_values:
+            messagebox.showinfo(
+                "No Parameter Selected",
+                "Add a parameterized function and select a parameter.",
+                parent=self.window,
+            )
+            return
+
+        if self.animation_job is not None:
+            return
+
+        self.animation_direction = 1
+        self.animation_play_button.configure(text="▶ Playing")
+        self._animate_parameter_step()
+
+    def pause_parameter_animation(self) -> None:
+        """Pause the current parameter animation."""
+        if self.animation_job is not None:
+            try:
+                self.window.after_cancel(self.animation_job)
+            except (ValueError, tk.TclError):
+                pass
+            self.animation_job = None
+
+        if hasattr(self, "animation_play_button"):
+            self.animation_play_button.configure(text="▶ Play")
+
+    def reset_animation_parameter(self) -> None:
+        """Reset the selected animated parameter."""
+        self.pause_parameter_animation()
+
+        parameter_name = self.animation_parameter_variable.get()
+        if parameter_name not in self.parameter_values:
+            return
+
+        self.parameter_values[parameter_name].set(
+            PARAMETER_DEFAULT_VALUE
+        )
+        self.animation_direction = 1
+        self.plot_all_expressions()
+
+    def _animate_parameter_step(self) -> None:
+        """Advance the selected parameter by one animation frame."""
+        parameter_name = self.animation_parameter_variable.get()
+
+        if parameter_name not in self.parameter_values:
+            self.pause_parameter_animation()
+            return
+
+        variable = self.parameter_values[parameter_name]
+        next_value = (
+            variable.get()
+            + PARAMETER_RESOLUTION * self.animation_direction
+        )
+        mode = self.animation_mode_variable.get()
+
+        if next_value > PARAMETER_MAX_VALUE:
+            if mode == "Ping-pong":
+                self.animation_direction = -1
+                next_value = (
+                    PARAMETER_MAX_VALUE - PARAMETER_RESOLUTION
+                )
+            elif mode == "Loop":
+                next_value = PARAMETER_MIN_VALUE
+            else:
+                variable.set(PARAMETER_MAX_VALUE)
+                self.plot_all_expressions()
+                self.pause_parameter_animation()
+                return
+
+        elif next_value < PARAMETER_MIN_VALUE:
+            if mode == "Ping-pong":
+                self.animation_direction = 1
+                next_value = (
+                    PARAMETER_MIN_VALUE + PARAMETER_RESOLUTION
+                )
+            elif mode == "Loop":
+                next_value = PARAMETER_MAX_VALUE
+            else:
+                variable.set(PARAMETER_MIN_VALUE)
+                self.plot_all_expressions()
+                self.pause_parameter_animation()
+                return
+
+        variable.set(next_value)
+        self.plot_all_expressions()
+
+        delay = max(
+            MIN_ANIMATION_DELAY_MS,
+            min(
+                MAX_ANIMATION_DELAY_MS,
+                int(self.animation_delay_variable.get()),
+            ),
+        )
+
+        self.animation_job = self.window.after(
+            delay,
+            self._animate_parameter_step,
         )
 
     # --------------------------------------------------
@@ -2831,6 +3225,15 @@ class GraphWindow:
                 "show_grid": self.show_grid_variable.get(),
                 "show_axes": self.show_axes_variable.get(),
                 "show_legend": self.show_legend_variable.get(),
+                "animation_parameter": (
+                    self.animation_parameter_variable.get()
+                ),
+                "animation_delay_ms": (
+                    self.animation_delay_variable.get()
+                ),
+                "animation_mode": (
+                    self.animation_mode_variable.get()
+                ),
             },
             "calculus_settings": {
                 "derivative_x": self.derivative_x_variable.get(),
@@ -2868,6 +3271,7 @@ class GraphWindow:
 
     def load_session(self) -> None:
         """Load a graph workspace from a JSON session file."""
+        self.pause_parameter_animation()
         filepath = filedialog.askopenfilename(
             parent=self.window,
             title="Load Graph Session",
@@ -2907,6 +3311,7 @@ class GraphWindow:
 
     def new_session(self) -> None:
         """Reset the graph workspace after confirmation."""
+        self.pause_parameter_animation()
         if self.expressions:
             confirmed = messagebox.askyesno(
                 "New Graph Session",
@@ -2955,6 +3360,11 @@ class GraphWindow:
         self.show_grid_variable.set(True)
         self.show_axes_variable.set(True)
         self.show_legend_variable.set(True)
+        self.animation_delay_variable.set(
+            DEFAULT_ANIMATION_DELAY_MS
+        )
+        self.animation_mode_variable.set("Ping-pong")
+        self.animation_parameter_variable.set("")
 
         self._refresh_expression_list()
         self._rebuild_parameter_sliders()
@@ -3172,6 +3582,47 @@ class GraphWindow:
         self.show_legend_variable.set(
             bool(interface_settings.get("show_legend", True))
         )
+
+        saved_animation_delay = int(
+            interface_settings.get(
+                "animation_delay_ms",
+                DEFAULT_ANIMATION_DELAY_MS,
+            )
+        )
+        self.animation_delay_variable.set(
+            max(
+                MIN_ANIMATION_DELAY_MS,
+                min(
+                    MAX_ANIMATION_DELAY_MS,
+                    saved_animation_delay,
+                ),
+            )
+        )
+
+        saved_animation_mode = str(
+            interface_settings.get(
+                "animation_mode",
+                "Ping-pong",
+            )
+        )
+        if saved_animation_mode not in {
+            "Ping-pong",
+            "Loop",
+            "One-shot",
+        }:
+            saved_animation_mode = "Ping-pong"
+        self.animation_mode_variable.set(saved_animation_mode)
+
+        saved_animation_parameter = str(
+            interface_settings.get(
+                "animation_parameter",
+                "",
+            )
+        )
+        if saved_animation_parameter in self.parameter_values:
+            self.animation_parameter_variable.set(
+                saved_animation_parameter
+            )
 
         self.derivative_x_variable.set(
             str(calculus_settings.get("derivative_x", "0"))
@@ -3526,6 +3977,7 @@ class GraphWindow:
 
     def clear_all_expressions(self) -> None:
         """Remove all functions and markers."""
+        self.pause_parameter_animation()
         self.expressions.clear()
         self.plotted_series.clear()
 
@@ -6291,6 +6743,19 @@ class ParametricGraphWindow:
         self._bind_events()
         self.plot_parametric(show_errors=False)
 
+    def _attach_tooltip(
+        self,
+        widget: tk.Widget,
+        text: str,
+    ) -> tk.Widget:
+        """Attach a tooltip and return the widget."""
+        Tooltip(
+            widget,
+            text,
+        )
+
+        return widget
+
     def _create_layout(self) -> None:
         """Create the parametric plotter layout."""
         main_frame = tk.Frame(self.window)
@@ -6499,6 +6964,27 @@ class ParametricGraphWindow:
         ).pack(side="right")
 
         self._reset_axes()
+
+        self._attach_advanced_tooltips()
+
+    def _attach_advanced_tooltips(self) -> None:
+        """Attach tooltips to the main controls in this window."""
+        tooltip_texts = {'Plot Parametric Curve': 'Plot x(t) and y(t) across the selected t-range.', 'Clear': 'Clear the current parametric graph.'}
+
+        def visit(widget: tk.Widget) -> None:
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Button):
+                    label = str(child.cget("text"))
+
+                    if label in tooltip_texts:
+                        self._attach_tooltip(
+                            child,
+                            tooltip_texts[label],
+                        )
+
+                visit(child)
+
+        visit(self.window)
 
     def _bind_events(self) -> None:
         """Bind entry changes and mouse movement."""
@@ -7072,6 +7558,19 @@ class PolarGraphWindow:
         self._bind_events()
         self.plot_polar(show_errors=False)
 
+    def _attach_tooltip(
+        self,
+        widget: tk.Widget,
+        text: str,
+    ) -> tk.Widget:
+        """Attach a tooltip and return the widget."""
+        Tooltip(
+            widget,
+            text,
+        )
+
+        return widget
+
     def _create_layout(self) -> None:
         """Create the polar plotter layout."""
         main_frame = tk.Frame(self.window)
@@ -7283,6 +7782,27 @@ class PolarGraphWindow:
         ).pack(side="right")
 
         self._reset_axes()
+
+        self._attach_advanced_tooltips()
+
+    def _attach_advanced_tooltips(self) -> None:
+        """Attach tooltips to the main controls in this window."""
+        tooltip_texts = {'Plot Polar Curve': 'Plot r(theta) across the selected angular range.', 'Clear': 'Clear the current polar graph.'}
+
+        def visit(widget: tk.Widget) -> None:
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Button):
+                    label = str(child.cget("text"))
+
+                    if label in tooltip_texts:
+                        self._attach_tooltip(
+                            child,
+                            tooltip_texts[label],
+                        )
+
+                visit(child)
+
+        visit(self.window)
 
     def _bind_events(self) -> None:
         """Bind entry changes and mouse movement."""
@@ -7844,6 +8364,19 @@ class PiecewiseGraphWindow:
 
         self.plot_piecewise(show_errors=False)
 
+    def _attach_tooltip(
+        self,
+        widget: tk.Widget,
+        text: str,
+    ) -> tk.Widget:
+        """Attach a tooltip and return the widget."""
+        Tooltip(
+            widget,
+            text,
+        )
+
+        return widget
+
     def _create_layout(self) -> None:
         """Create the piecewise plotter layout."""
         main_frame = tk.Frame(self.window)
@@ -8083,6 +8616,27 @@ class PiecewiseGraphWindow:
         ).pack(side="right")
 
         self._reset_axes()
+
+        self._attach_advanced_tooltips()
+
+    def _attach_advanced_tooltips(self) -> None:
+        """Attach tooltips to the main controls in this window."""
+        tooltip_texts = {'Plot Piecewise Function': 'Evaluate the rules from top to bottom and plot the first match.', 'Clear': 'Clear the current piecewise graph.'}
+
+        def visit(widget: tk.Widget) -> None:
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Button):
+                    label = str(child.cget("text"))
+
+                    if label in tooltip_texts:
+                        self._attach_tooltip(
+                            child,
+                            tooltip_texts[label],
+                        )
+
+                visit(child)
+
+        visit(self.window)
 
     def _bind_events(self) -> None:
         """Bind live updates and coordinate tracking."""
